@@ -62,6 +62,15 @@ function fakeApi(storagePath: string = mkdtempSync(join(tmpdir(), 'morph-test-')
     user: { storagePath: () => storagePath },
     hap: {
       uuid: { generate: (s: string) => `uuid:${s}` },
+      // Stand-in for HAP's way of saying an accessory cannot be reached.
+      HapStatusError: class HapStatusError extends Error {
+        hapStatus: number;
+        constructor(status: number) {
+          super(`HapStatusError ${status}`);
+          this.hapStatus = status;
+        }
+      },
+      HAPStatus: { SERVICE_COMMUNICATION_FAILURE: -70402 },
       // The plugin only uses these as opaque keys, so their names suffice.
       Service: new Proxy({}, { get: (_t, p) => String(p) }),
       Characteristic: new Proxy({}, { get: (_t, p) => String(p) }),
@@ -127,9 +136,15 @@ test('a configured light produces a lightbulb accessory with working handlers', 
   assert.ok(bulb, 'a Lightbulb service exists');
   assert.ok(!accessory.getService('MotionSensor'), 'no motion sensor unless configured');
 
-  // Defaults are readable before the lamp has ever connected.
-  assert.equal(await (bulb.getCharacteristic('On').handlers.get as () => unknown)(), false);
-  assert.equal(await (bulb.getCharacteristic('Brightness').handlers.get as () => unknown)(), 100);
+  // An unreachable lamp must report itself as such rather than serving the last
+  // value it happened to know, which HomeKit would show as current.
+  for (const name of ['On', 'Brightness', 'ColorTemperature']) {
+    await assert.rejects(
+      async () => (bulb.getCharacteristic(name).handlers.get as () => unknown)(),
+      /HapStatusError -70402/,
+      `${name} should report a communication failure while disconnected`,
+    );
+  }
 
   // HomeKit must be told the lamp's narrower mired range.
   assert.deepEqual(bulb.getCharacteristic('ColorTemperature').props, { minValue: 154, maxValue: 370 });

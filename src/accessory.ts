@@ -1,8 +1,4 @@
-import type {
-  CharacteristicValue,
-  PlatformAccessory,
-  Service,
-} from 'homebridge';
+import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 
 import type { ResolvedLightConfig } from './config.js';
 import { DysonMorphLamp } from './dyson/lamp.js';
@@ -48,25 +44,38 @@ export class MorphAccessory {
 
     this.lightbulb
       .getCharacteristic(Characteristic.On)
-      .onGet(() => this.lamp.getState().on)
+      .onGet(() => this.live(() => this.lamp.getState().on))
       .onSet((value) => this.handleSet('power', () => this.lamp.setPower(value as boolean)));
 
     this.lightbulb
       .getCharacteristic(Characteristic.Brightness)
-      .onGet(() => this.lamp.getState().brightness)
+      .onGet(() => this.live(() => this.lamp.getState().brightness))
       .onSet((value) => this.handleSet('brightness', () => this.lamp.setBrightness(value as number)));
 
     this.lightbulb
       .getCharacteristic(Characteristic.ColorTemperature)
       // HomeKit works in mireds, which run inverse to Kelvin.
       .setProps({ minValue: kelvinToMired(MAX_KELVIN), maxValue: kelvinToMired(MIN_KELVIN) })
-      .onGet(() => kelvinToMired(this.lamp.getState().kelvin))
+      .onGet(() => this.live(() => kelvinToMired(this.lamp.getState().kelvin)))
       .onSet((value) => this.handleSet('colour temperature', () => this.lamp.setColorTemperature(miredToKelvin(value as number))));
+
+    // Tell HomeKit the moment the link goes, rather than leaving it showing the
+    // last value as though it were current.
+    this.lamp.on('disconnected', () => this.markUnreachable());
+    this.lamp.on('connected', () => {
+      const state = this.lamp.getState();
+      this.lightbulb.updateCharacteristic(Characteristic.On, state.on);
+      this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
+      this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
+    });
 
     if (config.motionSensor) {
       this.motion =
         this.accessory.getService(Service.MotionSensor) ??
         this.accessory.addService(Service.MotionSensor, `${config.name} Motion`);
+      this.motion
+        .getCharacteristic(Characteristic.MotionDetected)
+        .onGet(() => this.live(() => this.motion?.getCharacteristic(Characteristic.MotionDetected).value ?? false));
       this.lamp.on('motion', (detected) => {
         this.motion?.updateCharacteristic(Characteristic.MotionDetected, detected);
       });
@@ -92,7 +101,37 @@ export class MorphAccessory {
   }
 
   /**
+   * Answer only while the lamp is actually reachable.
+   *
+   * Without this HomeKit keeps showing whatever was last known — a lamp that
+   * has been unreachable for minutes still reads as on at 100%, which is worse
+   * than saying nothing. Throwing a communication failure is how an accessory
+   * reports itself as unavailable, and the Home app shows "No Response".
+   */
+  private live<T>(read: () => T): T {
+    if (!this.lamp.isConnected()) {
+      throw new this.platform.api.hap.HapStatusError(
+        this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
+      );
+    }
+    return read();
+  }
+
+  /** Push "No Response" to every characteristic at once. */
+  private markUnreachable(): void {
+    const { Characteristic } = this.platform.api.hap;
+    const error = new Error(`${this.config.name} is not reachable over Bluetooth`);
+    for (const characteristic of [Characteristic.On, Characteristic.Brightness, Characteristic.ColorTemperature]) {
+      this.lightbulb.updateCharacteristic(characteristic, error);
+    }
+    this.motion?.updateCharacteristic(Characteristic.MotionDetected, error);
+  }
+
+  /**
    * Apply a write without failing the HomeKit request when the lamp is offline.
+   *
+   * A command issued while unreachable is held by the lamp session and applied
+   * on reconnect, so failing it here would be wrong: it is going to happen.
    */
   private async handleSet(what: string, apply: () => Promise<void>): Promise<CharacteristicValue | void> {
     try {
