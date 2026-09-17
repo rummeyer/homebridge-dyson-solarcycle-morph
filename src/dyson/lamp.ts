@@ -117,6 +117,21 @@ const RECONCILE_DELAY_MS = 900;
  */
 const SETTLE_MS = 3_000;
 
+/**
+ * How often to read the lamp's state as a backstop.
+ *
+ * Notifications are the primary path and usually suffice, but subscribing to a
+ * characteristic occasionally fails, and a lamp changed at the device would
+ * then never reach HomeKit. Deliberately slow: an earlier 20-second poll was
+ * implicated in connections dying, and nothing here is urgent enough to justify
+ * that risk.
+ */
+const POLL_INTERVAL_MS = 60_000;
+
+/** Attempts at subscribing to a characteristic before falling back to the poll. */
+const SUBSCRIBE_ATTEMPTS = 3;
+const SUBSCRIBE_RETRY_MS = 500;
+
 export interface LampState {
   on: boolean;
   /** HomeKit-style brightness, 0-100 %. */
@@ -192,6 +207,7 @@ export class DysonMorphLamp extends EventEmitter {
   private connected = false;
   private reconnectAttempt = 0;
   private reconnectTimer?: NodeJS.Timeout;
+  private pollTimer?: NodeJS.Timeout;
   private manualModeSetAt = 0;
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
@@ -244,6 +260,7 @@ export class DysonMorphLamp extends EventEmitter {
   async stop(): Promise<void> {
     this.running = false;
     clearTimeout(this.reconnectTimer);
+    clearInterval(this.pollTimer);
     await this.teardown();
     try {
       this.bluetooth?.destroy();
@@ -435,6 +452,7 @@ export class DysonMorphLamp extends EventEmitter {
     // "correct" the lamp to a state nobody is asking for any more.
     this.desired = { ...this.state };
     await this.subscribeToState();
+    this.startPolling();
     this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
     await this.reportSignalStrength();
     this.emit('connected');
@@ -741,10 +759,48 @@ export class DysonMorphLamp extends EventEmitter {
           this.publishFromLamp(patch);
         }
       });
-      await characteristic.startNotifications().catch((error) => {
-        this.log.debug(`No notifications for ${uuid}: ${describeError(error)}`);
-      });
+
+      // Subscribing fails intermittently with ATT 0x0e, and a characteristic
+      // left unsubscribed silently stops reporting for the whole session.
+      let subscribed = false;
+      for (let attempt = 1; attempt <= SUBSCRIBE_ATTEMPTS && !subscribed; attempt++) {
+        try {
+          await characteristic.startNotifications();
+          subscribed = true;
+        } catch (error) {
+          if (attempt === SUBSCRIBE_ATTEMPTS) {
+            this.log.warn(
+              `Could not subscribe to ${uuid} (${describeError(error)}). Changes made at the lamp ` +
+                `will take up to ${POLL_INTERVAL_MS / 1000}s to show up.`,
+            );
+          } else {
+            await sleep(SUBSCRIBE_RETRY_MS);
+          }
+        }
+      }
     }
+  }
+
+  /**
+   * Read the lamp periodically, so a change made at the device is not missed.
+   *
+   * Runs through the same queue as everything else, and its result goes through
+   * the settle window, so it cannot overwrite a value the user has just set.
+   */
+  private startPolling(): void {
+    clearInterval(this.pollTimer);
+    this.pollTimer = setInterval(() => {
+      if (!this.connected) {
+        return;
+      }
+      void this.enqueue(async () => {
+        this.publishFromLamp(await this.readState());
+      }, 'poll').catch((error: unknown) => {
+        // A failed read is not a reason to drop a working connection; the next
+        // poll, or a notification, will catch up.
+        this.log.debug(`Polling the lamp failed: ${describeError(error)}`);
+      });
+    }, POLL_INTERVAL_MS);
   }
 
   private handleDisconnect(): void {
@@ -761,6 +817,7 @@ export class DysonMorphLamp extends EventEmitter {
 
   private async teardown(): Promise<void> {
     this.connected = false;
+    clearInterval(this.pollTimer);
     await this.stopOurDiscovery();
     this.writes.cancelAll();
     this.reconciles.cancelAll();
