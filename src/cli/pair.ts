@@ -6,7 +6,7 @@
  * ready-to-paste Homebridge config block. After this the plugin never needs
  * network access again.
  *
- * Usage: dyson-morph-pair [--serial ABC-EU-…] [--mac AA:BB:CC:DD:EE:FF] [--country DE] [--culture de-DE] [--email …]
+ * Usage: dyson-morph-pair [--serial ABC-EU-…] [--mac AA:BB:CC:DD:EE:FF] [--country DE] [--culture de-DE] [--email …] [--debug]
  */
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
@@ -14,6 +14,7 @@ import { stdin, stdout } from 'node:process';
 import { DysonCloud } from '../dyson/cloud.js';
 
 interface Args {
+  debug?: string;
   serial?: string;
   mac?: string;
   country?: string;
@@ -28,7 +29,9 @@ function parseArgs(argv: string[]): Args {
     if (!match) {
       continue;
     }
-    args[match[1] as keyof Args] = match[2] ?? argv[++i];
+    const key = match[1] as keyof Args;
+    // --debug is a flag, not a value; don't let it swallow the next argument.
+    args[key] = key === 'debug' ? (match[2] ?? 'true') : (match[2] ?? argv[++i]);
   }
   return args;
 }
@@ -107,7 +110,7 @@ async function main(prompter: Prompter): Promise<void> {
   const serial = (args.serial ?? (await prompter.ask('Lamp serial number: '))).trim().toUpperCase();
   const mac = (args.mac ?? (await prompter.ask('Lamp BLE MAC address: '))).trim().toUpperCase();
 
-  const cloud = new DysonCloud({ country, culture });
+  const cloud = new DysonCloud({ country, culture, debug: args.debug === 'true' });
 
   console.log('\nRequesting a one-time code…');
   const challengeId = await cloud.beginLogin(email);

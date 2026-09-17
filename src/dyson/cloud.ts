@@ -29,17 +29,21 @@ export interface CloudOptions {
   /** BCP 47 culture, e.g. `de-DE`. */
   culture?: string;
   timeoutMs?: number;
+  /** Log every request and response. Never logs credentials or tokens. */
+  debug?: boolean;
 }
 
 export class DysonCloud {
   private readonly country: string;
   private readonly culture: string;
   private readonly timeoutMs: number;
+  private readonly debug: boolean;
 
   constructor(options: CloudOptions = {}) {
     this.country = options.country ?? 'DE';
     this.culture = options.culture ?? 'de-DE';
     this.timeoutMs = options.timeoutMs ?? 20_000;
+    this.debug = options.debug ?? false;
   }
 
   /**
@@ -129,6 +133,12 @@ export class DysonCloud {
       headers['Content-Type'] = 'application/json';
     }
 
+    if (this.debug) {
+      console.error(`→ ${method} ${url}`);
+      console.error(`  headers: ${JSON.stringify(redact(headers))}`);
+      console.error(`  body:    ${JSON.stringify(redact(options.body))}`);
+    }
+
     const response = await fetch(url, {
       method,
       headers,
@@ -136,12 +146,20 @@ export class DysonCloud {
       signal: AbortSignal.timeout(this.timeoutMs),
     });
 
-    if (!response.ok) {
-      const detail = (await response.text().catch(() => '')).slice(0, 300);
-      throw new Error(`Dyson API ${method} ${path} failed: ${response.status} ${response.statusText} ${detail}`);
+    const text = await response.text();
+
+    if (this.debug) {
+      console.error(`← ${response.status} ${response.statusText}`);
+      console.error(`  headers: ${JSON.stringify(Object.fromEntries(response.headers))}`);
+      console.error(`  body:    ${text.slice(0, 500)}`);
     }
 
-    const text = await response.text();
+    if (!response.ok) {
+      throw new Error(
+        `Dyson API ${method} ${path} failed: ${response.status} ${response.statusText} ${text.slice(0, 300)}`,
+      );
+    }
+
     if (!text) {
       return {} as T;
     }
@@ -151,4 +169,15 @@ export class DysonCloud {
       throw new Error(`Dyson API ${method} ${path} returned non-JSON: ${text.slice(0, 200)}`);
     }
   }
+}
+
+/** Strip anything credential-shaped so debug output is safe to paste. */
+function redact(value: unknown): unknown {
+  if (value === undefined || value === null || typeof value !== 'object') {
+    return value;
+  }
+  const secret = /password|token|otp|ltk|authorization|apiauthcode/i;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, secret.test(k) ? '<redacted>' : v]),
+  );
 }
