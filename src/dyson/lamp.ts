@@ -16,6 +16,7 @@ import type { Adapter, Device, GattCharacteristic, GattServer } from 'node-ble';
 import { buildReauthPayloadA, buildReauthPayloadC, deriveAesKey, parseReauthPayloadB } from './crypto.js';
 import { Debouncer } from './debounce.js';
 import { OperationQueue } from './queue.js';
+import { planReconciliation } from './reconcile.js';
 import {
   CHAR_AUTH,
   CHAR_BRIGHTNESS_LM,
@@ -108,7 +109,7 @@ const RECONCILE_DELAY_MS = 900;
  * The lamp rounds what it stores, so an exact comparison would report a
  * mismatch for a command that was in fact applied.
  */
-const LUMEN_TOLERANCE = 25;
+const BRIGHTNESS_TOLERANCE_PCT = 3;
 const KELVIN_TOLERANCE = 120;
 
 /**
@@ -340,32 +341,31 @@ export class DysonMorphLamp extends EventEmitter {
     if (!this.connected) {
       return;
     }
-    const wanted = this.desired;
     const actual = await this.readState();
-    const missed: string[] = [];
+    const { corrections, missed } = planReconciliation(this.desired, actual, {
+      brightness: BRIGHTNESS_TOLERANCE_PCT,
+      kelvin: KELVIN_TOLERANCE,
+    });
 
-    if (wanted.on !== undefined && actual.on !== undefined && actual.on !== wanted.on) {
-      missed.push(`power (wanted ${wanted.on ? 'on' : 'off'}, lamp is ${actual.on ? 'on' : 'off'})`);
-      await this.write(CHAR_POWER, Buffer.from([wanted.on ? 0x01 : 0x00]));
-    }
-    if (wanted.brightness !== undefined && actual.brightness !== undefined) {
-      const target = percentToLumens(wanted.brightness);
-      if (Math.abs(target - percentToLumens(actual.brightness)) > LUMEN_TOLERANCE) {
-        missed.push(`brightness (wanted ${wanted.brightness}%, lamp is ${actual.brightness}%)`);
-        await this.writeUint16(CHAR_BRIGHTNESS_LM, target);
-      }
-    }
-    if (wanted.kelvin !== undefined && actual.kelvin !== undefined) {
-      if (Math.abs(wanted.kelvin - actual.kelvin) > KELVIN_TOLERANCE) {
-        missed.push(`colour temperature (wanted ${wanted.kelvin}K, lamp is ${actual.kelvin}K)`);
-        await this.writeUint16(CHAR_COLOR_TEMP, wanted.kelvin);
-      }
-    }
-
-    if (missed.length === 0) {
+    if (corrections.length === 0) {
       this.patchState(actual);
       return;
     }
+
+    for (const correction of corrections) {
+      switch (correction.field) {
+        case 'on':
+          await this.write(CHAR_POWER, Buffer.from([correction.value ? 0x01 : 0x00]));
+          break;
+        case 'brightness':
+          await this.writeUint16(CHAR_BRIGHTNESS_LM, percentToLumens(correction.value));
+          break;
+        case 'kelvin':
+          await this.writeUint16(CHAR_COLOR_TEMP, correction.value);
+          break;
+      }
+    }
+
     this.log.info(`${this.mac} did not apply ${missed.join(', ')} — resent`);
     // Publish what the lamp reports rather than what was asked for, so HomeKit
     // stops claiming something untrue if the resend does not land either.
@@ -705,7 +705,13 @@ export class DysonMorphLamp extends EventEmitter {
     }
     const brightness = await read(CHAR_BRIGHTNESS_LM, 'brightness');
     if (brightness && brightness.length >= 2) {
-      patch.brightness = lumensToPercent(brightness.readUInt16LE(0));
+      const lumens = brightness.readUInt16LE(0);
+      // An off lamp reports no output rather than the level it will return to,
+      // and HomeKit uses brightness to decide how bright to come back on. Keep
+      // the last real level instead of overwriting it with zero.
+      if (lumens > 0 || patch.on !== false) {
+        patch.brightness = lumensToPercent(lumens);
+      }
     }
     const kelvin = await read(CHAR_COLOR_TEMP, 'colour temperature');
     if (kelvin && kelvin.length >= 2) {
@@ -757,7 +763,18 @@ export class DysonMorphLamp extends EventEmitter {
   private async subscribeToState(): Promise<void> {
     const sources: [string, (value: Buffer) => Partial<LampState> | undefined][] = [
       [CHAR_POWER, (value) => (value.length ? { on: value[0] !== 0 } : undefined)],
-      [CHAR_BRIGHTNESS_LM, (value) => (value.length >= 2 ? { brightness: lumensToPercent(value.readUInt16LE(0)) } : undefined)],
+      [
+        CHAR_BRIGHTNESS_LM,
+        (value) => {
+          if (value.length < 2) {
+            return undefined;
+          }
+          const lumens = value.readUInt16LE(0);
+          // Zero means "not lit", not "dimmed to nothing"; keep the level the
+          // lamp will return to so HomeKit can restore it.
+          return lumens > 0 ? { brightness: lumensToPercent(lumens) } : undefined;
+        },
+      ],
       [CHAR_COLOR_TEMP, (value) => (value.length >= 2 ? { kelvin: value.readUInt16LE(0) } : undefined)],
     ];
 
