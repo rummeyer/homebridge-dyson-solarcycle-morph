@@ -84,13 +84,6 @@ const WEAK_RSSI_DBM = -80;
 /** The lamp needs a moment to apply a mode change before the next write. */
 const MODE_SETTLE_MS = 200;
 
-/**
- * How long a command issued while disconnected stays worth applying.
- *
- * Long enough to cover a reconnect, short enough that a request from an hour
- * ago does not surprise anyone by taking effect when the link returns.
- */
-const INTENT_TTL_MS = 120_000;
 
 /**
  * How long after the last command to check the lamp agrees.
@@ -192,19 +185,11 @@ export class DysonMorphLamp extends EventEmitter {
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
 
-  /**
-   * What was asked for while the lamp was unreachable.
-   *
-   * Dropping a command because the link happened to be down is the one failure
-   * the user cannot work around: HomeKit shows the new state, the lamp never
-   * hears about it, and nothing retries. Held here and applied once the link is
-   * back.
-   */
-  private intent: Partial<LampState> = {};
-  private intentAt = 0;
 
   /** What the user last asked for. Reconciliation aims at this, not at guesses. */
   private desired: Partial<LampState> = {};
+
+
 
 
   constructor(options: LampOptions) {
@@ -267,11 +252,9 @@ export class DysonMorphLamp extends EventEmitter {
     // so anything still queued behind a slider drag is dropped rather than
     // made to run first: those values are about to be overtaken anyway, and
     // waiting for them is what made switching off take seconds.
+    this.requireConnection();
     this.desired = { ...this.desired, on };
     this.patchState({ on });
-    if (this.deferWhileOffline({ on })) {
-      return;
-    }
     const requestedAt = Date.now();
     const queued = this.operations.depth;
     // Power overrides everything: drop the slider values still waiting, which
@@ -293,22 +276,18 @@ export class DysonMorphLamp extends EventEmitter {
   async setBrightness(percent: number): Promise<void> {
     const lumens = percentToLumens(percent);
     this.log.debug(`Brightness ${percent}% requested (${this.operations.depth} queued)`);
+    this.requireConnection();
     this.desired = { ...this.desired, brightness: lumensToPercent(lumens) };
     this.patchState({ brightness: lumensToPercent(lumens) });
-    if (this.deferWhileOffline({ brightness: lumensToPercent(lumens) })) {
-      return;
-    }
     await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
     this.scheduleReconcile();
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
     const clamped = Math.min(MAX_KELVIN, Math.max(MIN_KELVIN, Math.round(kelvin)));
+    this.requireConnection();
     this.desired = { ...this.desired, kelvin: clamped };
     this.patchState({ kelvin: clamped });
-    if (this.deferWhileOffline({ kelvin: clamped })) {
-      return;
-    }
     // Not reconciled: a colour temperature that lands slightly off is invisible,
     // and checking it would cost a read on a link that is not always there.
     await this.writes.schedule(CHAR_COLOR_TEMP, () => this.writeUint16(CHAR_COLOR_TEMP, clamped));
@@ -335,6 +314,20 @@ export class DysonMorphLamp extends EventEmitter {
     void this.reconciles
       .schedule('reconcile', () => this.reconcile())
       .catch((error: unknown) => this.log.debug(`Reconcile failed: ${describe(error)}`));
+  }
+
+  /**
+   * Refuse a command there is no way to deliver.
+   *
+   * Holding it until the link returns sounds helpful and is not: the lamp is
+   * already reported as unreachable, so the user knows it did not happen, and
+   * replaying a handful of presses minutes later switches the lamp around on
+   * its own. Failing plainly leaves them in control.
+   */
+  private requireConnection(): void {
+    if (!this.connected) {
+      throw new Error(`${this.mac} is not connected`);
+    }
   }
 
   private async reconcile(): Promise<void> {
@@ -366,62 +359,6 @@ export class DysonMorphLamp extends EventEmitter {
     // Publish what the lamp reports rather than what was asked for, so HomeKit
     // stops claiming something untrue if the resend does not land either.
     this.patchState(await this.readState());
-  }
-
-  /**
-   * Hold a command that cannot be sent right now.
-   *
-   * @returns true when the caller should stop, because there is no link and the
-   * command has been remembered instead.
-   */
-  private deferWhileOffline(patch: Partial<LampState>): boolean {
-    if (this.connected) {
-      return false;
-    }
-    this.intent = { ...this.intent, ...patch };
-    this.intentAt = Date.now();
-    this.log.debug(`Not connected; holding ${JSON.stringify(patch)} until the link is back`);
-    return true;
-  }
-
-  /**
-   * Apply what was asked for while the lamp was unreachable.
-   *
-   * Runs after the state has been read back, so only genuine differences are
-   * written — the lamp may already be where the user wanted it.
-   */
-  private async applyIntent(): Promise<void> {
-    const intent = this.intent;
-    const age = Date.now() - this.intentAt;
-    this.intent = {};
-    if (Object.keys(intent).length === 0) {
-      return;
-    }
-    if (age > INTENT_TTL_MS) {
-      this.log.debug(`Discarding a ${Math.round(age / 1000)}s old command rather than applying it late`);
-      return;
-    }
-
-    this.log.info(`Applying ${JSON.stringify(intent)}, requested while the lamp was unreachable`);
-
-    // Switching off overrides the rest: nobody will see a brightness or colour
-    // that is applied purely to be extinguished a round-trip later, and going
-    // dark promptly is the whole point.
-    if (intent.on === false) {
-      await this.setPower(false);
-      return;
-    }
-
-    if (intent.kelvin !== undefined && intent.kelvin !== this.state.kelvin) {
-      await this.setColorTemperature(intent.kelvin);
-    }
-    if (intent.brightness !== undefined && intent.brightness !== this.state.brightness) {
-      await this.setBrightness(intent.brightness);
-    }
-    // Power last, so the lamp reaches its final brightness before coming on.
-    if (intent.on === true && !this.state.on) {
-      await this.setPower(true);
-    }
   }
 
   // ---------------------------------------------------------------- internals
@@ -474,11 +411,14 @@ export class DysonMorphLamp extends EventEmitter {
     this.connected = true;
     this.manualModeSetAt = 0;
     await this.refreshState();
+    // The lamp is the authority on where it is. Anything asked for before the
+    // link dropped is history, and aiming at it would have reconciliation
+    // "correct" the lamp to a state nobody is asking for any more.
+    this.desired = { ...this.state };
     await this.subscribeToState();
     this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
     await this.reportSignalStrength();
     this.emit('connected');
-    await this.applyIntent();
   }
 
   /**

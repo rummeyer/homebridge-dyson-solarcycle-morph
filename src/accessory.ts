@@ -128,16 +128,20 @@ export class MorphAccessory {
   }
 
   /**
-   * Apply a write without failing the HomeKit request when the lamp is offline.
+   * Apply a write, reporting failure to HomeKit rather than swallowing it.
    *
-   * A command issued while unreachable is held by the lamp session and applied
-   * on reconnect, so failing it here would be wrong: it is going to happen.
+   * A command that cannot be delivered is not retried later, so the Home app
+   * has to say so — otherwise it shows the new value as though it had taken
+   * effect and the user has no way to tell that nothing happened.
    */
   private async handleSet(what: string, apply: () => Promise<void>): Promise<CharacteristicValue | void> {
     try {
       await apply();
     } catch (error) {
       this.platform.log.warn(`Setting ${what} on ${this.config.name} failed: ${describe(error)}`);
+      throw new this.platform.api.hap.HapStatusError(
+        this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
+      );
     }
   }
 }

@@ -149,8 +149,13 @@ test('a configured light produces a lightbulb accessory with working handlers', 
   // HomeKit must be told the lamp's narrower mired range.
   assert.deepEqual(bulb.getCharacteristic('ColorTemperature').props, { minValue: 154, maxValue: 370 });
 
-  // A write with no lamp present must be reported, not thrown at HomeKit.
-  await assert.doesNotReject(() => (bulb.getCharacteristic('On').handlers.set as (v: unknown) => Promise<void>)(true));
+  // A write that cannot be delivered must be reported to HomeKit, not silently
+  // accepted: nothing retries it, so the Home app would otherwise show a value
+  // the lamp never received.
+  await assert.rejects(
+    async () => (bulb.getCharacteristic('On').handlers.set as (v: unknown) => Promise<void>)(true),
+    /HapStatusError -70402/,
+  );
 
   api.emit('shutdown');
   await settle();
