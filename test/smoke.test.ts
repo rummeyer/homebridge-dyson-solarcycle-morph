@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
@@ -81,19 +83,28 @@ const light = {
   accountId: '12345678-90ab-cdef-1234-567890abcdef',
 };
 
-test('the entry point registers the platform under the documented names', () => {
-  const entry = require('../dist/index.js').default;
+test('Homebridge can load the built entry point and register the platform', async () => {
+  // Mirrors homebridge/dist/plugin.js: dynamic import, then the default export
+  // (falling back to a nested default for CommonJS interop).
+  const namespace = await import(pathToFileURL(resolve('dist/index.js')).href);
+  const exported = namespace.default;
+  const initializer = typeof exported === 'function' ? exported : exported?.default;
+  assert.equal(typeof exported, 'function', 'module.exports is the initializer itself');
+  assert.equal(typeof initializer, 'function');
+
   const { api } = fakeApi();
   let seen: [string, string] | undefined;
   (api as unknown as { registerPlatform: unknown }).registerPlatform = (plugin: string, platform: string) => {
     seen = [plugin, platform];
   };
-  entry(api);
+  (initializer as (a: unknown) => void)(api);
   assert.deepEqual(seen, ['homebridge-dyson-solarcycle-morph', 'DysonSolarcycleMorph']);
 
   // config.schema.json's pluginAlias is what Homebridge UI writes into config.json.
-  const schema = require('../config.schema.json');
-  assert.equal(schema.pluginAlias, seen![1]);
+  assert.equal(require('../config.schema.json').pluginAlias, seen![1]);
+
+  // package.json's name is the plugin name Homebridge registers accessories under.
+  assert.equal(require('../package.json').name, seen![0]);
 });
 
 test('a configured light produces a lightbulb accessory with working handlers', async () => {
