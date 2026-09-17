@@ -93,6 +93,9 @@ const INTENT_TTL_MS = 120_000;
 /** How long to give the lamp to apply a command before checking it took. */
 const VERIFY_DELAY_MS = 400;
 
+/** Granularity for noticing that a slower operation has been overridden. */
+const INTERRUPT_POLL_MS = 50;
+
 /**
  * Tolerances when checking a write landed.
  *
@@ -193,6 +196,15 @@ export class DysonMorphLamp extends EventEmitter {
   private intent: Partial<LampState> = {};
   private intentAt = 0;
 
+  /**
+   * Bumped by a command that makes slower work pointless.
+   *
+   * Cancelling the queue only drops what has not started. A value write already
+   * in flight still owes a verification and possibly a retry, and switching off
+   * should not wait behind a brightness nobody will see.
+   */
+  private interrupt = 0;
+
   constructor(options: LampOptions) {
     super();
     this.mac = options.mac.toUpperCase();
@@ -259,6 +271,9 @@ export class DysonMorphLamp extends EventEmitter {
     }
     const requestedAt = Date.now();
     const queued = this.operations.depth;
+    // Power overrides everything: drop what is waiting, and cut short whatever
+    // verification or retry is still running for a value write.
+    this.interrupt++;
     this.writes.cancelAll();
     this.operations.cancelQueued();
     await this.enqueue(async () => {
@@ -347,16 +362,23 @@ export class DysonMorphLamp extends EventEmitter {
     matches: (actual: T, target: T) => boolean,
     apply: (actual: T) => void,
   ): Promise<void> {
+    const interruptedAt = this.interrupt;
+    const overtaken = (): boolean => this.writes.isPending(uuid) || this.interrupt !== interruptedAt;
+
     for (let attempt = 1; attempt <= 2; attempt++) {
       const started = Date.now();
       await this.write(uuid, value);
       this.log.debug(`Wrote ${uuid} in ${Date.now() - started}ms (attempt ${attempt})`);
-      if (this.writes.isPending(uuid)) {
+      if (overtaken()) {
         return;
       }
-      await sleep(VERIFY_DELAY_MS);
-      if (this.writes.isPending(uuid)) {
-        return;
+      // Waited in slices so a command arriving mid-verification is noticed now
+      // rather than after the full delay.
+      for (let waited = 0; waited < VERIFY_DELAY_MS; waited += INTERRUPT_POLL_MS) {
+        await sleep(INTERRUPT_POLL_MS);
+        if (overtaken()) {
+          return;
+        }
       }
 
       const raw = await this.chars[uuid]?.readValue().catch((error: unknown) => {
@@ -366,7 +388,7 @@ export class DysonMorphLamp extends EventEmitter {
         return undefined;
       });
       const actual = raw ? decode(raw) : undefined;
-      if (actual === undefined) {
+      if (actual === undefined || overtaken()) {
         return;
       }
       if (matches(actual, target)) {
@@ -421,16 +443,24 @@ export class DysonMorphLamp extends EventEmitter {
     }
 
     this.log.info(`Applying ${JSON.stringify(intent)}, requested while the lamp was unreachable`);
+
+    // Switching off overrides the rest: nobody will see a brightness or colour
+    // that is applied purely to be extinguished a round-trip later, and going
+    // dark promptly is the whole point.
+    if (intent.on === false) {
+      await this.setPower(false);
+      return;
+    }
+
     if (intent.kelvin !== undefined && intent.kelvin !== this.state.kelvin) {
       await this.setColorTemperature(intent.kelvin);
     }
     if (intent.brightness !== undefined && intent.brightness !== this.state.brightness) {
       await this.setBrightness(intent.brightness);
     }
-    // Power last: the lamp should reach its final brightness before coming on,
-    // and switching off makes the other two pointless anyway.
-    if (intent.on !== undefined && intent.on !== this.state.on) {
-      await this.setPower(intent.on);
+    // Power last, so the lamp reaches its final brightness before coming on.
+    if (intent.on === true && !this.state.on) {
+      await this.setPower(true);
     }
   }
 
