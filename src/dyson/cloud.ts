@@ -16,6 +16,23 @@ function apiHostname(country: string): string {
   return country.toUpperCase() === 'CN' ? 'https://appapi.cp.dyson.cn' : 'https://appapi.cp.dyson.com';
 }
 
+/** One device as the account describes it. */
+export interface DysonDevice {
+  serialNumber: string;
+  name: string;
+  /** `light`, `robot`, `ec` (air treatment), and so on. */
+  category?: string;
+  /** `lecOnly` means Bluetooth with no Wi-Fi path. */
+  connectionCategory?: string;
+  model?: string | null;
+  type?: string;
+}
+
+/** Devices this plugin can drive: lights reachable over Bluetooth. */
+export function isBluetoothLight(device: DysonDevice): boolean {
+  return device.category === 'light' && device.connectionCategory !== 'wifiOnly';
+}
+
 export interface LoginResult {
   /** Bearer token for subsequent calls. */
   token: string;
@@ -88,6 +105,20 @@ export class DysonCloud {
       throw new Error('Dyson login succeeded but returned no token/account');
     }
     return { token: data.token, accountId: data.account };
+  }
+
+  /**
+   * List the devices registered to the account.
+   *
+   * This is how a light is told apart from a vacuum: both advertise the same
+   * Dyson BLE service and neither carries model information in its
+   * advertisement, so the account is the only reliable source.
+   */
+  async getDevices(token: string): Promise<DysonDevice[]> {
+    const devices = await this.request<DysonDevice[]>('GET', '/v3/manifest', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return Array.isArray(devices) ? devices : [];
   }
 
   /**

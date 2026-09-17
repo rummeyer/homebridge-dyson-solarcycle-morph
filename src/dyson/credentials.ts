@@ -21,6 +21,13 @@ export interface StoredCredentials {
   created: string;
 }
 
+/** A MyDyson session, kept so the device list survives a page reload. */
+export interface StoredAccount {
+  token: string;
+  accountId: string;
+  created: string;
+}
+
 export class CredentialStore {
   private readonly directory: string;
   private store: ReturnType<typeof storage.create> | undefined;
@@ -64,6 +71,26 @@ export class CredentialStore {
 
   async delete(serial: string): Promise<void> {
     await (await this.open()).removeItem(CredentialStore.key(serial));
+  }
+
+  async getAccount(email: string): Promise<StoredAccount | undefined> {
+    const stored: unknown = await (await this.open()).getItem(`${email.trim().toLowerCase()}:account`);
+    if (!stored || typeof stored !== 'object') {
+      return undefined;
+    }
+    const { token, accountId } = stored as Partial<StoredAccount>;
+    return token && accountId ? (stored as StoredAccount) : undefined;
+  }
+
+  async setAccount(email: string, account: Omit<StoredAccount, 'created'>): Promise<void> {
+    await (await this.open()).setItem(`${email.trim().toLowerCase()}:account`, {
+      ...account,
+      created: new Date().toISOString(),
+    });
+  }
+
+  async deleteAccount(email: string): Promise<void> {
+    await (await this.open()).removeItem(`${email.trim().toLowerCase()}:account`);
   }
 
   /** Serials that have stored credentials. */

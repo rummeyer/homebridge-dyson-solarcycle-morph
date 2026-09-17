@@ -15,20 +15,7 @@
 <div id="morph">
   <div class="card mb-3">
     <div class="card-body">
-      <h5 class="card-title">1. Your lights</h5>
-      <p class="card-text text-muted small">
-        Scanning finds nearby Dyson lights and adds them below, filling in the address and
-        serial number. Takes about 15 seconds.
-      </p>
-      <button type="button" class="btn btn-secondary" id="morph-scan">Scan for lights</button>
-      <div id="morph-scan-result" class="mt-3"></div>
-      <hr>
-      <div id="morph-status">…</div>
-    </div>
-  </div>
-  <div class="card mb-3">
-    <div class="card-body">
-      <h5 class="card-title">2. MyDyson account</h5>
+      <h5 class="card-title">1. MyDyson account</h5>
       <p class="card-text text-muted small mb-3">
         A lamp ignores every command until it is paired, and its key is issued by Dyson against
         the account the lamp belongs to. <strong>The lamp must already be registered in the
@@ -50,12 +37,7 @@
         <small class="form-text text-muted">Two-letter code for the country your Dyson account belongs to.</small>
       </div>
 
-      <!-- Shown while something still needs authorising -->
       <div id="morph-auth">
-        <div id="morph-needs-lights" class="alert alert-warning morph-hidden">
-          Add a light above first — pairing fetches a key for each one, so there has to be
-          something to fetch it for.
-        </div>
         <button type="button" class="btn btn-primary" id="morph-request">Request code by email</button>
         <div id="morph-code" class="mt-3 morph-hidden">
           <div class="form-group">
@@ -63,13 +45,12 @@
             <input type="text" class="form-control" id="morph-otp" inputmode="numeric"
                    autocomplete="one-time-code" style="max-width:12rem">
           </div>
-          <button type="button" class="btn btn-primary" id="morph-pair">Pair lights</button>
+          <button type="button" class="btn btn-primary" id="morph-verify">Authorise</button>
         </div>
       </div>
 
-      <!-- Shown when every configured light already has a key -->
       <div id="morph-done" class="morph-hidden">
-        <p class="mb-2"><span class="badge badge-success">All lights paired</span>
+        <p class="mb-2"><span class="badge badge-success">Authorised</span>
           <span class="text-muted small ml-2" id="morph-done-when"></span></p>
         <button type="button" class="btn btn-link btn-sm pl-0" id="morph-again">Authorise again</button>
         <button type="button" class="btn btn-link btn-sm text-danger morph-hidden" id="morph-forget-password">
@@ -81,6 +62,21 @@
     </div>
   </div>
 
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">2. Your lights</h5>
+      <p class="card-text text-muted small">
+        Lists the lights on your Dyson account, then scans for their Bluetooth addresses.
+        Takes about 15 seconds. Your account is what identifies a light — over Bluetooth a
+        light and a robot vacuum look identical.
+      </p>
+      <button type="button" class="btn btn-secondary" id="morph-find" disabled>Find my lights</button>
+      <div id="morph-found" class="mt-3"></div>
+      <hr>
+      <h6>Configured</h6>
+      <div id="morph-status">…</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -127,45 +123,65 @@
     return configs[0].dysonAccount;
   }
 
-  const configuredSerials = async () =>
-    (await readConfig())[0].lights.map((l) => (l?.serial ?? '').trim()).filter(Boolean);
+  const account = () => ({
+    email: $('morph-email').value.trim(),
+    password: $('morph-password').value,
+    country: $('morph-country').value.trim().toUpperCase(),
+  });
 
   function showAuthStep() {
     $('morph-done').classList.add('morph-hidden');
     $('morph-auth').classList.remove('morph-hidden');
+    $('morph-find').disabled = true;
   }
 
   /**
-   * Collapse the code request once every light holds a key.
+   * Collapse the code request once the session works.
    *
-   * It stays reachable behind "Authorise again" because a lamp can be added
-   * later or re-registered to another account.
+   * It stays reachable behind "Authorise again" because a token can be revoked
+   * between visits, and re-opens on its own when the check finds it rejected.
    */
-  function showPaired(oldest) {
+  function showAuthorised(created, devices) {
     $('morph-auth').classList.add('morph-hidden');
     $('morph-code').classList.add('morph-hidden');
     $('morph-done').classList.remove('morph-hidden');
-    $('morph-done-when').textContent = oldest ? `since ${new Date(oldest).toLocaleDateString()}` : '';
-    // Offer to drop the password only when there is one to drop.
+    $('morph-find').disabled = false;
+    const parts = [];
+    if (created) parts.push(`since ${new Date(created).toLocaleDateString()}`);
+    if (typeof devices === 'number') parts.push(`${devices} device${devices === 1 ? '' : 's'} in the account`);
+    $('morph-done-when').textContent = parts.join(' · ');
     $('morph-forget-password').classList.toggle('morph-hidden', !$('morph-password').value);
   }
 
-  /** List each configured light and whether it is paired. */
-  async function refreshStatus() {
-    const serials = await configuredSerials();
-    // Authorising with no lights configured would fetch nothing, so say so and
-    // disable the step rather than letting it fail at the last click.
-    $('morph-needs-lights').classList.toggle('morph-hidden', serials.length > 0);
-    $('morph-request').disabled = serials.length === 0;
-    $('morph-pair').disabled = serials.length === 0;
-
-    if (serials.length === 0) {
-      $('morph-status').innerHTML =
-        '<span class="text-muted">No lights configured yet. Scan above, or add one in the form below.</span>';
+  /** Ask the server whether the stored session still works. */
+  async function refreshAuth() {
+    if (!$('morph-email').value.trim()) {
       showAuthStep();
       return;
     }
+    try {
+      const status = await homebridge.request('/auth-status', { account: account() });
+      if (status.authorised) {
+        showAuthorised(status.created, status.devices);
+        clearMessage();
+      } else {
+        showAuthStep();
+        // Only explain when a stored authorisation stopped working; having none
+        // yet is the normal first-run state.
+        if (status.reason === 'rejected') show(status.message, 'warning');
+      }
+    } catch {
+      showAuthStep();
+    }
+  }
 
+  /** List each configured light and whether it holds a key. */
+  async function refreshStatus() {
+    const serials = (await readConfig())[0].lights.map((l) => (l?.serial ?? '').trim()).filter(Boolean);
+    if (serials.length === 0) {
+      $('morph-status').innerHTML = '<span class="text-muted">No lights configured yet.</span>';
+      return;
+    }
     let paired;
     try {
       ({ paired } = await homebridge.request('/pair-status', { serials }));
@@ -173,14 +189,13 @@
       $('morph-status').innerHTML = `<span class="text-danger">${esc(err.message ?? err)}</span>`;
       return;
     }
-
     $('morph-status').innerHTML = serials.map((serial) => {
       const entry = paired[serial];
       if (!entry) {
         return `<div class="mb-2"><code>${esc(serial)}</code>
-                <span class="badge badge-warning ml-2">not paired</span></div>`;
+                <span class="badge badge-warning ml-2">no key</span></div>`;
       }
-      return `<div class="mb-2" data-row="${esc(serial)}"><code>${esc(serial)}</code>
+      return `<div class="mb-2"><code>${esc(serial)}</code>
               <span class="badge badge-success ml-2">paired</span>
               <span class="text-muted small ml-2">${esc(new Date(entry.created).toLocaleString())}</span>
               <button type="button" class="btn btn-link btn-sm text-danger morph-unpair"
@@ -188,49 +203,35 @@
     }).join('');
 
     for (const button of document.querySelectorAll('.morph-unpair')) {
-      button.addEventListener('click', () => onUnpair(button));
-    }
-
-    const dates = serials.map((s) => paired[s]?.created).filter(Boolean).sort();
-    if (serials.every((s) => paired[s])) {
-      showPaired(dates[0]);
-    } else {
-      showAuthStep();
+      button.addEventListener('click', () => armThenRun(button, 'Unpair', async () => {
+        const { message } = await homebridge.request('/forget', { serial: button.dataset.serial });
+        show(message, 'success');
+        await refreshStatus();
+      }));
     }
   }
 
   /**
-   * Unpair, confirming in place.
+   * Confirm a destructive action in place.
    *
    * The host iframe swallows window.confirm, so the first click turns the
    * button into the confirmation rather than opening a dialog that never shows.
    */
-  function onUnpair(button) {
+  function armThenRun(button, label, task) {
     if (button.dataset.armed !== 'yes') {
       button.dataset.armed = 'yes';
-      button.textContent = 'Really unpair?';
+      button.textContent = 'Are you sure?';
       button.classList.add('font-weight-bold');
       setTimeout(() => {
         if (button.isConnected && button.dataset.armed === 'yes') {
           button.dataset.armed = '';
-          button.textContent = 'Unpair';
+          button.textContent = label;
           button.classList.remove('font-weight-bold');
         }
       }, 5000);
       return;
     }
-    void (async () => {
-      try {
-        homebridge.showSpinner();
-        const { message } = await homebridge.request('/forget', { serial: button.dataset.serial });
-        show(message, 'success');
-        await refreshStatus();
-      } catch (err) {
-        show(err.message ?? String(err), 'danger');
-      } finally {
-        homebridge.hideSpinner();
-      }
-    })();
+    void busy(button, task);
   }
 
   /** Run `task` with the spinner up and the button disabled. */
@@ -247,27 +248,63 @@
     }
   }
 
-  $('morph-scan').addEventListener('click', () => busy($('morph-scan'), async () => {
-    clearMessage();
-    const { found } = await homebridge.request('/discover');
-    if (!found.length) {
-      $('morph-scan-result').innerHTML =
-        '<span class="text-muted">No Dyson lights found. Check the lamp is powered and within Bluetooth range of this machine.</span>';
+  $('morph-request').addEventListener('click', () => busy($('morph-request'), async () => {
+    const stored = await storeAccount();
+    if (!stored.email || !stored.password) {
+      show('Enter your MyDyson email address and password first.', 'warning');
       return;
     }
-    $('morph-scan-result').innerHTML =
-      `<p class="mb-2">Found ${found.length} light${found.length === 1 ? '' : 's'}:</p>` +
-      found.map((d) => `<div class="mb-2"><code>${esc(d.serial)}</code>
-        <span class="text-muted small ml-2">${esc(d.mac)}</span>
-        <button type="button" class="btn btn-sm btn-outline-primary ml-2 morph-add"
-                data-mac="${esc(d.mac)}" data-serial="${esc(d.serial)}">Add</button></div>`).join('');
+    const { message } = await homebridge.request('/start-auth', { account: stored });
+    show(message, 'success');
+    $('morph-code').classList.remove('morph-hidden');
+    $('morph-otp').focus();
+  }));
 
-    for (const button of document.querySelectorAll('.morph-add')) {
-      button.addEventListener('click', () => void addLight(button.dataset.mac, button.dataset.serial));
+  $('morph-verify').addEventListener('click', () => busy($('morph-verify'), async () => {
+    const stored = await storeAccount();
+    const { message } = await homebridge.request('/finish-auth', { account: stored, otpCode: $('morph-otp').value });
+    $('morph-otp').value = '';
+    show(message, 'success');
+    await refreshAuth();
+  }));
+
+  $('morph-find').addEventListener('click', () => busy($('morph-find'), async () => {
+    clearMessage();
+    const { lights, skipped } = await homebridge.request('/lights', { account: account() });
+
+    if (lights.length === 0) {
+      $('morph-found').innerHTML =
+        '<span class="text-muted">No lights on this Dyson account. Register the lamp in the MyDyson app first.</span>';
+    } else {
+      $('morph-found').innerHTML = lights.map((light) => {
+        const reachable = Boolean(light.mac);
+        return `<div class="mb-2">
+          <code>${esc(light.serial)}</code>
+          <span class="ml-2">${esc(light.name)}</span>
+          ${light.model ? `<span class="text-muted small ml-2">${esc(light.model)}</span>` : ''}
+          ${reachable
+            ? `<span class="text-muted small ml-2">${esc(light.mac)}</span>
+               <button type="button" class="btn btn-sm btn-outline-primary ml-2 morph-add"
+                       data-mac="${esc(light.mac)}" data-serial="${esc(light.serial)}"
+                       data-name="${esc(light.name)}">Add and pair</button>`
+            : '<span class="badge badge-warning ml-2">not in Bluetooth range</span>'}
+        </div>`;
+      }).join('');
+
+      for (const button of document.querySelectorAll('.morph-add')) {
+        button.addEventListener('click', () => void busy(button, () => addAndPair(button.dataset)));
+      }
+    }
+
+    // Saying what was left out is what stops someone adding their vacuum.
+    if (skipped.length) {
+      $('morph-found').innerHTML +=
+        `<p class="text-muted small mt-3 mb-0">Not a Bluetooth light, so not offered: ` +
+        skipped.map((d) => `${esc(d.name)} (${esc(d.category ?? 'unknown')})`).join(', ') + '</p>';
     }
   }));
 
-  async function addLight(mac, serial) {
+  async function addAndPair({ mac, serial, name }) {
     const configs = await readConfig();
     const lights = configs[0].lights;
     // Re-adding a light should correct its address, not duplicate it.
@@ -275,56 +312,21 @@
     if (existing) {
       existing.mac = mac;
     } else {
-      lights.push({ name: `Dyson ${serial}`, mac, serial });
+      lights.push({ name: name || `Dyson ${serial}`, mac, serial });
     }
     await homebridge.updatePluginConfig(configs);
-    await refreshStatus();
-    const stillUnpaired = $('morph-auth').classList.contains('morph-hidden') === false;
-    show(
-      stillUnpaired
-        ? `${serial} added. Now authorise your MyDyson account below to fetch its key, then press Save.`
-        : `${serial} added. Press Save to keep it.`,
-      'success',
-    );
-  }
 
-  $('morph-request').addEventListener('click', () => busy($('morph-request'), async () => {
-    const account = await storeAccount();
-    if (!account.email || !account.password) {
-      show('Enter your MyDyson email address and password first.', 'warning');
-      return;
-    }
-    const { message } = await homebridge.request('/start-auth', { account });
+    const { message } = await homebridge.request('/pair', { account: account(), serial });
     show(message, 'success');
-    $('morph-code').classList.remove('morph-hidden');
-    $('morph-otp').focus();
-  }));
-
-  $('morph-pair').addEventListener('click', () => busy($('morph-pair'), async () => {
-    const account = await storeAccount();
-    const serials = await configuredSerials();
-    const response = await homebridge.request('/finish-auth', {
-      account,
-      otpCode: $('morph-otp').value,
-      serials,
-    });
-    $('morph-otp').value = '';
-    const failed = response.results.filter((r) => !r.paired);
-    show(
-      failed.length === 0
-        ? response.message
-        : `${response.message} ${failed.map((r) => `${r.serial}: ${r.message}`).join(' ')}`,
-      failed.length === 0 ? 'success' : 'warning',
-    );
     await refreshStatus();
-  }));
+  }
 
   $('morph-again').addEventListener('click', () => {
     clearMessage();
     showAuthStep();
   });
 
-  // The password is only needed to exchange a code for a key. Once pairing is
+  // The password is only needed to exchange a code for a token. Once that is
   // done it can leave config.json, where it would otherwise sit in plain text.
   $('morph-forget-password').addEventListener('click', () => void (async () => {
     const configs = await readConfig();
@@ -336,16 +338,17 @@
   })());
 
   for (const id of ['morph-email', 'morph-password', 'morph-country']) {
-    $(id).addEventListener('change', () => void storeAccount());
+    $(id).addEventListener('change', () => void storeAccount().then(refreshAuth));
   }
 
   (async () => {
     const [config] = await readConfig();
-    const account = config.dysonAccount;
-    $('morph-email').value = account.email ?? '';
-    $('morph-password').value = account.password ?? '';
+    const stored = config.dysonAccount;
+    $('morph-email').value = stored.email ?? '';
+    $('morph-password').value = stored.password ?? '';
     // Prefill the country from the browser; it is usually right and easy to miss.
-    $('morph-country').value = account.country ?? new Intl.Locale(navigator.language).region ?? 'GB';
+    $('morph-country').value = stored.country ?? new Intl.Locale(navigator.language).region ?? 'GB';
+    await refreshAuth();
     await refreshStatus();
   })();
 })();
