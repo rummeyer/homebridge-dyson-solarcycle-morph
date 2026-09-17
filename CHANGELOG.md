@@ -5,6 +5,30 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] — 2026-09-17
+
+### Added
+
+- The log carries signal strength: on the line reported when the lamp connects,
+  once a minute as an average with its range, and on the line reported when a
+  connection drops. The **range** is what shows interference — a lamp that is
+  not moving cannot swing by 20 dB on its own — while the average only says
+  whether it is too far away.
+- Connecting on a later attempt is reported, since repeated attempts mean
+  collisions where connections are established.
+
+### Fixed
+
+- A lamp switched on at the device itself now reaches HomeKit. Subscribing to a
+  characteristic fails intermittently, which was caught and ignored, leaving
+  that value silent for the rest of the session. Subscriptions are retried, a
+  failure that sticks is warned about, and a slow poll backs them up.
+
+### Changed
+
+- The README is written for someone setting the plugin up, rather than for
+  someone reading the source.
+
 ## [0.2.1] — 2026-09-17
 
 ### Changed
