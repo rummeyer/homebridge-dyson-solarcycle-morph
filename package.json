@@ -1,0 +1,54 @@
+{
+  "name": "homebridge-dyson-solarcycle-morph",
+  "displayName": "Dyson Solarcycle Morph",
+  "version": "0.1.0",
+  "description": "Homebridge plugin for the Bluetooth LE controlled Dyson Solarcycle/Lightcycle Morph task light",
+  "license": "MIT",
+  "author": "Oliver Rummeyer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rummeyer/homebridge-dyson-solarcycle-morph.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rummeyer/homebridge-dyson-solarcycle-morph/issues"
+  },
+  "main": "dist/index.js",
+  "bin": {
+    "dyson-morph-pair": "dist/cli/pair.js"
+  },
+  "engines": {
+    "node": "^20.19.0 || ^22.12.0 || ^24.0.0",
+    "homebridge": "^1.8.0 || ^2.0.0"
+  },
+  "keywords": [
+    "homebridge-plugin",
+    "dyson",
+    "solarcycle",
+    "lightcycle",
+    "morph",
+    "bluetooth",
+    "ble",
+    "light"
+  ],
+  "scripts": {
+    "build": "tsc && chmod +x dist/cli/pair.js",
+    "watch": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "dependencies": {
+    "node-ble": "^1.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "homebridge": "^2.4.0",
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "dist",
+    "config.schema.json",
+    "README.md",
+    "LICENSE"
+  ]
+}

@@ -1,0 +1,65 @@
+{
+  "pluginAlias": "DysonSolarcycleMorph",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph. Run `dyson-morph-pair` once to obtain the long-term key and account ID.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "adapter": {
+        "title": "Bluetooth adapter",
+        "type": "string",
+        "required": false,
+        "placeholder": "hci0",
+        "description": "Leave empty to use the system default adapter."
+      },
+      "lights": {
+        "title": "Lights",
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "title": "Name",
+              "type": "string",
+              "required": true,
+              "default": "Dyson Morph"
+            },
+            "mac": {
+              "title": "BLE MAC address",
+              "type": "string",
+              "required": true,
+              "placeholder": "AA:BB:CC:DD:EE:FF",
+              "pattern": "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
+            },
+            "serial": {
+              "title": "Serial number",
+              "type": "string",
+              "required": true,
+              "description": "Printed on the lamp base and shown in the MyDyson app."
+            },
+            "ltk": {
+              "title": "Long-term key",
+              "type": "string",
+              "required": true,
+              "pattern": "^[0-9a-fA-F]+$",
+              "description": "Hex string from `dyson-morph-pair`. Treat it like a password."
+            },
+            "accountId": {
+              "title": "Dyson account ID",
+              "type": "string",
+              "required": true,
+              "description": "Account UUID from `dyson-morph-pair`."
+            },
+            "motionSensor": {
+              "title": "Expose the motion sensor",
+              "type": "boolean",
+              "default": false,
+              "description": "Adds the lamp's built-in motion detector as a HomeKit motion sensor."
+            }
+          }
+        }
+      }
+    }
+  }
+}
