@@ -36,8 +36,8 @@
     "build": "tsc && chmod +x dist/cli/pair.js",
     "watch": "tsc --watch",
     "clean": "rm -rf dist",
-    "test": "node --test test/*.test.ts",
-    "prepublishOnly": "npm run clean && npm run build && npm test",
+    "test": "npm run build && node --test test/*.test.ts",
+    "prepublishOnly": "npm run clean && npm test",
     "prepare": "npm run build"
   },
   "dependencies": {
