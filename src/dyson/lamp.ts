@@ -13,6 +13,7 @@ import { createBluetooth } from 'node-ble';
 import type { Adapter, Device, GattCharacteristic, GattServer } from 'node-ble';
 
 import { buildReauthPayloadA, buildReauthPayloadC, deriveAesKey, parseReauthPayloadB } from './crypto.js';
+import { Debouncer } from './debounce.js';
 import {
   CHAR_AUTH,
   CHAR_BRIGHTNESS_LM,
@@ -62,6 +63,15 @@ const MANUAL_MODE_TTL_MS = 60_000;
 
 /** The lamp needs a moment to apply a mode change before the next write. */
 const MODE_SETTLE_MS = 200;
+
+/**
+ * How long to wait for a slider to settle before writing.
+ *
+ * Dragging brightness or colour temperature in HomeKit emits several values a
+ * second. Sending each one queues writes faster than the lamp applies them, so
+ * it visibly lags the slider. Only the value the user stops on matters.
+ */
+const WRITE_DEBOUNCE_MS = 200;
 
 export interface LampState {
   on: boolean;
@@ -123,6 +133,8 @@ export class DysonMorphLamp extends EventEmitter {
 
   /** Serialises all GATT access. */
   private queue: Promise<unknown> = Promise.resolve();
+
+  private readonly writes = new Debouncer(WRITE_DEBOUNCE_MS, (task) => this.enqueue(task));
 
   private running = false;
   private connected = false;
@@ -199,24 +211,21 @@ export class DysonMorphLamp extends EventEmitter {
   /** @param percent HomeKit brightness, 0-100 %. */
   async setBrightness(percent: number): Promise<void> {
     const lumens = percentToLumens(percent);
-    await this.enqueue(async () => {
-      await this.ensureManualMode();
-      const value = Buffer.alloc(2);
-      value.writeUInt16LE(lumens);
-      await this.write(CHAR_BRIGHTNESS_LM, value);
-      this.patchState({ brightness: lumensToPercent(lumens) });
-    });
+    this.patchState({ brightness: lumensToPercent(lumens) });
+    await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
     const clamped = Math.min(MAX_KELVIN, Math.max(MIN_KELVIN, Math.round(kelvin)));
-    await this.enqueue(async () => {
-      await this.ensureManualMode();
-      const value = Buffer.alloc(2);
-      value.writeUInt16LE(clamped);
-      await this.write(CHAR_COLOR_TEMP, value);
-      this.patchState({ kelvin: clamped });
-    });
+    this.patchState({ kelvin: clamped });
+    await this.writes.schedule(CHAR_COLOR_TEMP, () => this.writeUint16(CHAR_COLOR_TEMP, clamped));
+  }
+
+  private async writeUint16(uuid: string, value: number): Promise<void> {
+    await this.ensureManualMode();
+    const buffer = Buffer.alloc(2);
+    buffer.writeUInt16LE(value);
+    await this.write(uuid, buffer);
   }
 
   // ---------------------------------------------------------------- internals
@@ -458,6 +467,7 @@ export class DysonMorphLamp extends EventEmitter {
 
   private async teardown(): Promise<void> {
     this.connected = false;
+    this.writes.cancelAll();
     this.assembler.reset();
     this.waiters.clear();
     this.writeTypes = {};

@@ -12,8 +12,9 @@ what is verified from what is assumed.
 
 ## GATT layout
 
-**Observed on a Solarcycle Morph** (serial `ABC-EU-…`, advertised name = serial),
-which differs from the published notes in two ways worth knowing:
+**Observed on a Solarcycle Morph desk light, model CD06** (serial `ABC-EU-…`;
+the lamp advertises its serial as its BLE name). It differs from the published
+notes in two ways worth knowing:
 
 Characteristics are spread over **three** services, not one:
 
@@ -42,15 +43,21 @@ characteristic UUID, which is unique on its own.
 
 The published notes say brightness, colour temperature and daylight-mode writes
 must be **acknowledged** (`write-with-response`), because the lamp otherwise
-discards them. But this lamp declares no `write` flag at all — only
-`write-without-response` — so BlueZ would reject an acknowledged write. The
-client picks the mode from the advertised flags per characteristic instead of
-assuming either. Whether unacknowledged writes actually stick on this model is
-**still unverified**.
+discards them. That does not hold here: this lamp declares no `write` flag at
+all, only `write-without-response`, and unacknowledged writes to power,
+brightness and colour temperature **do take effect** — verified on hardware.
+The client picks the mode from each characteristic's advertised flags rather
+than assuming either, so models that do offer `write` still get acknowledged
+writes.
 
 Every characteristic except `2dd10013` (RSSI) returns `Operation Not Authorized`
 for reads and notifications until the handshake below completes — confirmed on
-hardware.
+hardware, as is the fact that they read and write normally afterwards.
+
+Connecting is unreliable in a way that is worth expecting: BlueZ commonly
+returns `le-connection-abort-by-local` for the first two or three attempts
+before one succeeds, so the client retries with backoff rather than treating it
+as fatal.
 
 Before writing brightness or colour temperature, write
 `13 20 01 00 00` to `2dd10021-…` to leave daylight mode, then wait ~200 ms.
@@ -116,6 +123,6 @@ well-known constant that the endpoint accepts in place of a session code).
 
 ## Open questions
 
-- `2dd11006-…` and `2dd11007-…` are not decoded.
+- `2dd11004-…`, `2dd11006-…` and `2dd11007-…` are not decoded.
 - Daylight mode is write-only; the plugin cannot report whether it is active.
 - Only the `0x2013` attribute is known for `2dd10021-…`.
