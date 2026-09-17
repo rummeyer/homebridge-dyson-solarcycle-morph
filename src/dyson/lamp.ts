@@ -91,11 +91,16 @@ const MODE_SETTLE_MS = 200;
  */
 const INTENT_TTL_MS = 120_000;
 
-/** How long to give the lamp to apply a command before checking it took. */
-const VERIFY_DELAY_MS = 400;
-
-/** Granularity for noticing that a slower operation has been overridden. */
-const INTERRUPT_POLL_MS = 50;
+/**
+ * How long after the last command to check the lamp agrees.
+ *
+ * Verification cannot sit in the command's own path. The write itself takes a
+ * millisecond; waiting for the lamp to apply it and reading it back costs
+ * several hundred more, which was most of the time it took to switch the lamp
+ * off. It runs once instead, after commands stop arriving, against the state
+ * the user ended up asking for.
+ */
+const RECONCILE_DELAY_MS = 900;
 
 /**
  * Tolerances when checking a write landed.
@@ -177,6 +182,7 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly operations = new OperationQueue();
 
   private readonly writes = new Debouncer(WRITE_DEBOUNCE_MS, (task, key) => this.enqueue(task, key));
+  private readonly reconciles = new Debouncer(RECONCILE_DELAY_MS, (task, key) => this.enqueue(task, key));
 
   private running = false;
   private connected = false;
@@ -197,14 +203,9 @@ export class DysonMorphLamp extends EventEmitter {
   private intent: Partial<LampState> = {};
   private intentAt = 0;
 
-  /**
-   * Bumped by a command that makes slower work pointless.
-   *
-   * Cancelling the queue only drops what has not started. A value write already
-   * in flight still owes a verification and possibly a retry, and switching off
-   * should not wait behind a brightness nobody will see.
-   */
-  private interrupt = 0;
+  /** What the user last asked for. Reconciliation aims at this, not at guesses. */
+  private desired: Partial<LampState> = {};
+
 
   constructor(options: LampOptions) {
     super();
@@ -266,147 +267,109 @@ export class DysonMorphLamp extends EventEmitter {
     // so anything still queued behind a slider drag is dropped rather than
     // made to run first: those values are about to be overtaken anyway, and
     // waiting for them is what made switching off take seconds.
+    this.desired = { ...this.desired, on };
     this.patchState({ on });
     if (this.deferWhileOffline({ on })) {
       return;
     }
     const requestedAt = Date.now();
     const queued = this.operations.depth;
-    // Power overrides everything: drop what is waiting, and cut short whatever
-    // verification or retry is still running for a value write.
-    this.interrupt++;
+    // Power overrides everything: drop the slider values still waiting, which
+    // nobody will see once the lamp is switching.
     this.writes.cancelAll();
+    this.reconciles.cancelAll();
     this.operations.cancelQueued();
     await this.enqueue(async () => {
       const waited = Date.now() - requestedAt;
-      await this.writeVerified(
-        CHAR_POWER,
-        Buffer.from([on ? 0x01 : 0x00]),
-        (value) => (value.length ? value[0] !== 0 : undefined),
-        on,
-        (actual, target) => actual === target,
-        (value) => this.patchState({ on: value }),
-      );
-      this.log.info(
-        `Power ${on ? 'on' : 'off'} took ${Date.now() - requestedAt}ms ` +
-          `(${waited}ms waiting behind ${queued} queued, ${Date.now() - requestedAt - waited}ms on the lamp)`,
+      await this.write(CHAR_POWER, Buffer.from([on ? 0x01 : 0x00]));
+      this.log.debug(
+        `Power ${on ? 'on' : 'off'} took ${Date.now() - requestedAt}ms (${waited}ms waiting behind ${queued} queued)`,
       );
     });
+    this.scheduleReconcile();
   }
 
   /** @param percent HomeKit brightness, 0-100 %. */
   async setBrightness(percent: number): Promise<void> {
     const lumens = percentToLumens(percent);
     this.log.debug(`Brightness ${percent}% requested (${this.operations.depth} queued)`);
+    this.desired = { ...this.desired, brightness: lumensToPercent(lumens) };
     this.patchState({ brightness: lumensToPercent(lumens) });
     if (this.deferWhileOffline({ brightness: lumensToPercent(lumens) })) {
       return;
     }
-    await this.writes.schedule(CHAR_BRIGHTNESS_LM, () =>
-      this.writeUint16(CHAR_BRIGHTNESS_LM, lumens, LUMEN_TOLERANCE, (actual) =>
-        this.patchState({ brightness: lumensToPercent(actual) }),
-      ),
-    );
+    await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
+    this.scheduleReconcile();
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
     const clamped = Math.min(MAX_KELVIN, Math.max(MIN_KELVIN, Math.round(kelvin)));
+    this.desired = { ...this.desired, kelvin: clamped };
     this.patchState({ kelvin: clamped });
     if (this.deferWhileOffline({ kelvin: clamped })) {
       return;
     }
-    await this.writes.schedule(CHAR_COLOR_TEMP, () =>
-      this.writeUint16(CHAR_COLOR_TEMP, clamped, KELVIN_TOLERANCE, (actual) => this.patchState({ kelvin: actual })),
-    );
+    await this.writes.schedule(CHAR_COLOR_TEMP, () => this.writeUint16(CHAR_COLOR_TEMP, clamped));
+    this.scheduleReconcile();
   }
 
-  private async writeUint16(
-    uuid: string,
-    value: number,
-    tolerance: number,
-    apply: (actual: number) => void,
-  ): Promise<void> {
+  private async writeUint16(uuid: string, value: number): Promise<void> {
     await this.ensureManualMode();
     const buffer = Buffer.alloc(2);
     buffer.writeUInt16LE(value);
-    await this.writeVerified(
-      uuid,
-      buffer,
-      (raw) => (raw.length >= 2 ? raw.readUInt16LE(0) : undefined),
-      value,
-      (actual, target) => Math.abs(actual - target) <= tolerance,
-      apply,
-    );
+    await this.write(uuid, buffer);
   }
 
   /**
-   * Write, then look at whether the lamp took it.
+   * Check the lamp ended up where it was asked to, once commands stop arriving.
    *
    * Control writes are unacknowledged — the characteristics offer no `write`
-   * flag at all — so a command can be dropped with nothing to say so. The lamp
+   * flag at all — so one can be dropped with nothing to say so. The lamp
    * notifies on change, but a lost write changes nothing and therefore notifies
-   * nothing, which is exactly the case that would leave HomeKit showing a state
-   * the lamp is not in. So the value is read back, retried once if it did not
-   * land, and whatever the lamp actually reports becomes the state we publish.
-   *
-   * Verification is skipped entirely when a newer value for the same
-   * characteristic is already waiting. Mid-drag the lamp has moved on by the
-   * time the read returns, so comparing against this target would report a
-   * mismatch that never happened — and retrying would write a stale value back
-   * over the newer one, dragging the slider backwards.
+   * nothing, which is exactly the case that leaves HomeKit showing a state the
+   * lamp is not in. Checking once at the end costs one read of each value
+   * instead of one per command, and none of it in the path the user waits on.
    */
-  private async writeVerified<T>(
-    uuid: string,
-    value: Buffer,
-    decode: (raw: Buffer) => T | undefined,
-    target: T,
-    matches: (actual: T, target: T) => boolean,
-    apply: (actual: T) => void,
-  ): Promise<void> {
-    const interruptedAt = this.interrupt;
-    const overtaken = (): boolean => this.writes.isPending(uuid) || this.interrupt !== interruptedAt;
+  private scheduleReconcile(): void {
+    void this.reconciles
+      .schedule('reconcile', () => this.reconcile())
+      .catch((error: unknown) => this.log.debug(`Reconcile failed: ${describe(error)}`));
+  }
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const started = Date.now();
-      await this.write(uuid, value);
-      this.log.debug(`Wrote ${uuid} in ${Date.now() - started}ms (attempt ${attempt})`);
-      if (overtaken()) {
-        return;
-      }
-      // Waited in slices so a command arriving mid-verification is noticed now
-      // rather than after the full delay.
-      for (let waited = 0; waited < VERIFY_DELAY_MS; waited += INTERRUPT_POLL_MS) {
-        await sleep(INTERRUPT_POLL_MS);
-        if (overtaken()) {
-          return;
-        }
-      }
+  private async reconcile(): Promise<void> {
+    if (!this.connected) {
+      return;
+    }
+    const wanted = this.desired;
+    const actual = await this.readState();
+    const missed: string[] = [];
 
-      const raw = await this.chars[uuid]?.readValue().catch((error: unknown) => {
-        // Not being able to check is not a reason to fail the command; the
-        // write may well have landed. Notifications will correct us if not.
-        this.log.debug(`Could not verify ${uuid}: ${describe(error)}`);
-        return undefined;
-      });
-      const actual = raw ? decode(raw) : undefined;
-      if (actual === undefined || overtaken()) {
-        return;
-      }
-      if (matches(actual, target)) {
-        return;
-      }
-
-      if (attempt === 1) {
-        this.log.debug(`${uuid} did not take (wanted ${String(target)}, lamp reports ${String(actual)}); retrying`);
-      } else {
-        // Report what the lamp is actually doing rather than what was asked
-        // for, so HomeKit stops claiming something untrue.
-        this.log.warn(
-          `${this.mac} did not accept a command (wanted ${String(target)}, lamp reports ${String(actual)})`,
-        );
-        apply(actual);
+    if (wanted.on !== undefined && actual.on !== undefined && actual.on !== wanted.on) {
+      missed.push(`power (wanted ${wanted.on ? 'on' : 'off'}, lamp is ${actual.on ? 'on' : 'off'})`);
+      await this.write(CHAR_POWER, Buffer.from([wanted.on ? 0x01 : 0x00]));
+    }
+    if (wanted.brightness !== undefined && actual.brightness !== undefined) {
+      const target = percentToLumens(wanted.brightness);
+      if (Math.abs(target - percentToLumens(actual.brightness)) > LUMEN_TOLERANCE) {
+        missed.push(`brightness (wanted ${wanted.brightness}%, lamp is ${actual.brightness}%)`);
+        await this.writeUint16(CHAR_BRIGHTNESS_LM, target);
       }
     }
+    if (wanted.kelvin !== undefined && actual.kelvin !== undefined) {
+      if (Math.abs(wanted.kelvin - actual.kelvin) > KELVIN_TOLERANCE) {
+        missed.push(`colour temperature (wanted ${wanted.kelvin}K, lamp is ${actual.kelvin}K)`);
+        await this.writeUint16(CHAR_COLOR_TEMP, wanted.kelvin);
+      }
+    }
+
+    if (missed.length === 0) {
+      this.patchState(actual);
+      return;
+    }
+    this.log.info(`${this.mac} did not apply ${missed.join(', ')} — resent`);
+    // Publish what the lamp reports rather than what was asked for, so HomeKit
+    // stops claiming something untrue if the resend does not land either.
+    this.patchState(await this.readState());
   }
 
   /**
@@ -720,6 +683,11 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   private async refreshState(): Promise<void> {
+    this.patchState(await this.readState());
+  }
+
+  /** Read what the lamp currently reports. Values it will not give up are absent. */
+  private async readState(): Promise<Partial<LampState>> {
     const patch: Partial<LampState> = {};
     const failures: string[] = [];
     const read = async (uuid: string, label: string): Promise<Buffer | undefined> => {
@@ -750,7 +718,7 @@ export class DysonMorphLamp extends EventEmitter {
     if (failures.length > 0) {
       this.log.warn(`Could not read lamp state (${failures.join('; ')})`);
     }
-    this.patchState(patch);
+    return patch;
   }
 
   /**
@@ -825,6 +793,7 @@ export class DysonMorphLamp extends EventEmitter {
   private async teardown(): Promise<void> {
     this.connected = false;
     this.writes.cancelAll();
+    this.reconciles.cancelAll();
     this.assembler.reset();
     this.waiters.clear();
     this.writeTypes = {};
