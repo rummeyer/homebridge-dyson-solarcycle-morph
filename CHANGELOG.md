@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] — 2026-09-17
+
+### Changed
+
+- The settings page shows the auth code field alongside the request and submit
+  buttons, rather than revealing it once a code has been requested. Someone who
+  already has a code in their inbox can type it straight in, and the step no
+  longer looks incomplete.
+- Clearing the password no longer prints a notice explaining that the field is
+  now empty, next to the field that is now empty.
+
 ## [0.2.0] — 2026-09-17
 
 Identical in content to 0.1.0. Published from CI rather than from a developer's
