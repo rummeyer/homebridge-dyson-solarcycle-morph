@@ -14,6 +14,7 @@ import type { Adapter, Device, GattCharacteristic, GattServer } from 'node-ble';
 
 import { buildReauthPayloadA, buildReauthPayloadC, deriveAesKey, parseReauthPayloadB } from './crypto.js';
 import { Debouncer } from './debounce.js';
+import { OperationQueue } from './queue.js';
 import {
   CHAR_AUTH,
   CHAR_BRIGHTNESS_LM,
@@ -161,9 +162,9 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly waiters = new Map<number, (message: DysonMessage) => void>();
 
   /** Serialises all GATT access. */
-  private queue: Promise<unknown> = Promise.resolve();
+  private readonly operations = new OperationQueue();
 
-  private readonly writes = new Debouncer(WRITE_DEBOUNCE_MS, (task) => this.enqueue(task));
+  private readonly writes = new Debouncer(WRITE_DEBOUNCE_MS, (task, key) => this.enqueue(task, key));
 
   private running = false;
   private connected = false;
@@ -229,6 +230,12 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   async setPower(on: boolean): Promise<void> {
+    // Turning the lamp on or off is the one command that must feel immediate,
+    // so anything still queued behind a slider drag is dropped rather than
+    // made to run first: those values are about to be overtaken anyway, and
+    // waiting for them is what made switching off take seconds.
+    this.writes.cancelAll();
+    this.operations.cancelQueued();
     await this.enqueue(async () => {
       this.patchState({ on });
       await this.writeVerified(
@@ -680,11 +687,15 @@ export class DysonMorphLamp extends EventEmitter {
     return characteristic;
   }
 
-  /** Run `task` after every previously queued GATT operation has settled. */
-  private enqueue<T>(task: () => Promise<T>): Promise<T> {
-    const result = this.queue.then(task, task);
-    this.queue = result.catch(() => {});
-    return result;
+  /**
+   * Run `task` after every previously queued GATT operation has settled.
+   *
+   * @param key Marks the operation replaceable: queueing another under the same
+   * key drops this one. Used for value writes, where an older value is worthless
+   * once a newer one is waiting, and omitted for power so it always runs.
+   */
+  private enqueue<T>(task: () => Promise<T>, key?: string): Promise<T | undefined> {
+    return this.operations.run(task, key);
   }
 
   private patchState(patch: Partial<LampState>): void {

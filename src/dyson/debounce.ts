@@ -5,13 +5,14 @@ export class Debouncer {
   private readonly pending = new Map<string, { timer: NodeJS.Timeout; supersede: () => void }>();
 
   private readonly delayMs: number;
-  private readonly run: (task: () => Promise<void>) => Promise<void>;
+  private readonly run: (task: () => Promise<void>, key: string) => Promise<unknown>;
 
   /**
    * @param delayMs How long a key must stay unchanged before its task runs.
-   * @param run Executes the winning task, typically through a serialising queue.
+   * @param run Executes the winning task, typically through a serialising
+   * queue. The key is passed on so the queue can apply the same grouping.
    */
-  constructor(delayMs: number, run: (task: () => Promise<void>) => Promise<void>) {
+  constructor(delayMs: number, run: (task: () => Promise<void>, key: string) => Promise<unknown>) {
     this.delayMs = delayMs;
     this.run = run;
   }
@@ -30,7 +31,7 @@ export class Debouncer {
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(key);
-        this.run(task).then(resolve, reject);
+        this.run(task, key).then(() => resolve(), reject);
       }, this.delayMs);
       this.pending.set(key, {
         timer,

@@ -88,6 +88,19 @@ test('tasks run through the supplied queue, not directly', async () => {
   assert.deepEqual(order, ['queue', 'task']);
 });
 
+test('the key is handed to the queue so it can group the same way', async () => {
+  const seen: string[] = [];
+  const d = new Debouncer(5, async (task, key) => {
+    seen.push(key);
+    await task();
+  });
+  await Promise.all([
+    d.schedule('brightness', async () => {}),
+    d.schedule('colour', async () => {}),
+  ]);
+  assert.deepEqual(seen.sort(), ['brightness', 'colour']);
+});
+
 test('a key with a task waiting reports as pending', async () => {
   const { run } = recorder();
   const d = new Debouncer(30, run);
