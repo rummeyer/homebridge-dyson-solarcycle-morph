@@ -6,6 +6,13 @@
   "schema": {
     "type": "object",
     "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Dyson Solarcycle Morph",
+        "required": true,
+        "description": "Shown in the Homebridge log in front of this plugin\u2019s messages."
+      },
       "adapter": {
         "title": "Bluetooth adapter",
         "type": "string",
@@ -72,6 +79,7 @@
   "customUiPath": "./homebridge-ui",
   "footerDisplay": "Lamp keys are stored in the plugin's storage directory, never in config.json. Your MyDyson password is only needed while authorising \u2014 clear it afterwards.",
   "layout": [
+    "name",
     {
       "type": "fieldset",
       "title": "Lights",

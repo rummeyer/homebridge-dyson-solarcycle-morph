@@ -37,6 +37,8 @@ export interface DysonAccountConfig {
 }
 
 export interface MorphPlatformConfig extends PlatformConfig {
+  /** Homebridge uses this as the log prefix for everything this plugin says. */
+  name?: string;
   lights?: LightConfig[];
   dysonAccount?: DysonAccountConfig;
   /** HCI adapter to use, e.g. `hci0`. Defaults to the system default adapter. */

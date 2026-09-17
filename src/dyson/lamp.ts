@@ -163,6 +163,9 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly reconciles = new Debouncer(RECONCILE_DELAY_MS, (task, key) => this.enqueue(task, key));
   private readonly settling = new SettleWindow(SETTLE_MS);
 
+  /** Whether the running scan is one we started and must clean up. */
+  private discoveryIsOurs = false;
+
   private running = false;
   private connected = false;
   private reconnectAttempt = 0;
@@ -390,6 +393,8 @@ export class DysonMorphLamp extends EventEmitter {
       });
     }
 
+    await this.stopOurDiscovery();
+
     this.connected = true;
     this.manualModeSetAt = 0;
     this.settling.clear();
@@ -405,57 +410,48 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Connect, preferring the record BlueZ already holds.
+   * Connect, with a scan running.
    *
-   * Connecting to a known address needs no discovery at all and is by far the
-   * fastest path. But BlueZ keeps listing a device for a while after it stops
-   * hearing from it, and connecting to such a stale record is refused — so a
-   * failure here falls straight through to a scan rather than giving up and
-   * waiting out the backoff on a record already known to be suspect.
+   * Connecting without one is aborted by the controller every time
+   * (`le-connection-abort-by-local`), while the same attempt succeeds whenever
+   * a scan is active — observed repeatedly, including by watching the plugin
+   * connect the moment an unrelated `bluetoothctl scan` was started.
+   *
+   * A connect issued in the same breath as starting the scan is also aborted,
+   * so a freshly started scan settles first.
    */
   private async connectDevice(adapter: Adapter): Promise<Device> {
-    if ((await adapter.devices()).includes(this.mac)) {
-      const cached = await adapter.getDevice(this.mac);
-      await this.markTrusted(cached);
-      try {
-        await cached.connect();
-        return cached;
-      } catch (error) {
-        this.log.debug(`Cached record for ${this.mac} did not connect (${describeError(error)}); scanning instead`);
-      }
+    if (!(await adapter.isDiscovering())) {
+      await adapter.startDiscovery();
+      this.discoveryIsOurs = true;
+      this.log.debug(`Scanning for ${this.mac}`);
+      const device = await adapter.waitDevice(this.mac, DISCOVERY_TIMEOUT_MS);
+      await this.markTrusted(device);
+      await sleep(DISCOVERY_SETTLE_MS);
+      await device.connect();
+      return device;
     }
 
-    const discovered = await this.discoverDevice(adapter);
-    await this.markTrusted(discovered);
-    await discovered.connect();
-    return discovered;
+    const device = await adapter.waitDevice(this.mac, DISCOVERY_TIMEOUT_MS);
+    await this.markTrusted(device);
+    await device.connect();
+    return device;
   }
 
   /**
-   * Find the lamp by scanning.
+   * Stop the scan we started, now that it has served its purpose.
    *
-   * A connect issued immediately after discovery starts is aborted by the
-   * controller, so this settles first. Discovery is stopped again before
-   * connecting: leaving it running makes the radio time-slice between scan
-   * windows and connection events, which starves the link.
+   * Leaving it running makes the radio time-slice between scan windows and
+   * connection events for as long as the session lasts.
    */
-  private async discoverDevice(adapter: Adapter): Promise<Device> {
-    this.log.debug(`Scanning for ${this.mac}`);
-    const startedDiscovery = !(await adapter.isDiscovering());
-    if (startedDiscovery) {
-      await adapter.startDiscovery();
+  private async stopOurDiscovery(): Promise<void> {
+    if (!this.discoveryIsOurs || !this.adapter) {
+      return;
     }
-    try {
-      const device = await adapter.waitDevice(this.mac, DISCOVERY_TIMEOUT_MS);
-      await sleep(DISCOVERY_SETTLE_MS);
-      return device;
-    } finally {
-      if (startedDiscovery) {
-        await adapter.stopDiscovery().catch((error) => {
-          this.log.debug(`Could not stop discovery: ${describeError(error)}`);
-        });
-      }
-    }
+    this.discoveryIsOurs = false;
+    await this.adapter.stopDiscovery().catch((error: unknown) => {
+      this.log.debug(`Could not stop discovery: ${describeError(error)}`);
+    });
   }
 
   /**
@@ -725,6 +721,7 @@ export class DysonMorphLamp extends EventEmitter {
 
   private async teardown(): Promise<void> {
     this.connected = false;
+    await this.stopOurDiscovery();
     this.writes.cancelAll();
     this.reconciles.cancelAll();
     this.assembler.reset();

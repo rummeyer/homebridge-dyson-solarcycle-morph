@@ -101,8 +101,11 @@
   async function readConfig() {
     const configs = await homebridge.getPluginConfig();
     if (!configs.length) {
-      configs.push({ platform: 'DysonSolarcycleMorph' });
+      configs.push({ platform: 'DysonSolarcycleMorph', name: 'Dyson Solarcycle Morph' });
     }
+    // Homebridge logs under this name; without it every line is prefixed with
+    // the package name instead.
+    configs[0].name ??= 'Dyson Solarcycle Morph';
     configs[0].dysonAccount ??= {};
     configs[0].lights ??= [];
     return configs;
