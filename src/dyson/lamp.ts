@@ -51,6 +51,18 @@ const RECONNECT_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000];
 /** How often to poll the lamp so BlueZ keeps the link up. */
 const KEEPALIVE_INTERVAL_MS = 20_000;
 
+/** How long to scan for a lamp BlueZ has never seen. */
+const DISCOVERY_TIMEOUT_MS = 30_000;
+
+/**
+ * Pause between starting discovery and connecting.
+ *
+ * Measured, not guessed: a connect issued straight after discovery starts is
+ * aborted by the controller every time, while the same connect succeeds after
+ * a few seconds of scanning.
+ */
+const DISCOVERY_SETTLE_MS = 8_000;
+
 /** The lamp can take a while to answer the first handshake message. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 
@@ -264,29 +276,8 @@ export class DysonMorphLamp extends EventEmitter {
     if (!adapter) {
       throw new Error('Bluetooth adapter is not available');
     }
-    // Discovery is only needed until the lamp is located, and it must not be
-    // left running: a scanning radio time-slices between scan windows and
-    // connection events, which starves an established link until it hits its
-    // supervision timeout. That presents as connecting successfully and then
-    // dropping a second later, over and over.
-    const startedDiscovery = !(await adapter.isDiscovering());
-    if (startedDiscovery) {
-      await adapter.startDiscovery();
-    }
-    try {
-      this.log.debug(`Waiting for ${this.mac} to advertise…`);
-      this.device = await adapter.waitDevice(this.mac);
-      // Stay in discovery until the link is up. BlueZ drops the device object
-      // for an unbonded, unconnected device once scanning stops, and connecting
-      // to that stale proxy fails with "interface not found in proxy object".
-      await this.device.connect();
-    } finally {
-      if (startedDiscovery) {
-        await adapter.stopDiscovery().catch((error) => {
-          this.log.debug(`Could not stop discovery: ${describe(error)}`);
-        });
-      }
-    }
+    this.device = await this.acquireDevice(adapter);
+    await this.device.connect();
     this.device.on('disconnect', () => this.handleDisconnect());
 
     await this.discoverCharacteristics(await this.device.gatt());
@@ -312,6 +303,43 @@ export class DysonMorphLamp extends EventEmitter {
     this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
     await this.reportSignalStrength();
     this.emit('connected');
+  }
+
+  /**
+   * Get a device object to connect to, scanning only if BlueZ has never seen
+   * this lamp.
+   *
+   * Connecting to an address BlueZ already knows needs no discovery at all and
+   * is by far the fastest path. Scanning is the fallback, and it has to settle
+   * first: a connect issued immediately after discovery starts is aborted by
+   * the controller, which BlueZ reports as `le-connection-abort-by-local` — a
+   * message that reads like a local fault rather than a timing problem.
+   *
+   * Discovery is stopped again before connecting. Leaving it running makes the
+   * radio time-slice between scan windows and connection events, which starves
+   * the link until it hits its supervision timeout.
+   */
+  private async acquireDevice(adapter: Adapter): Promise<Device> {
+    if ((await adapter.devices()).includes(this.mac)) {
+      return adapter.getDevice(this.mac);
+    }
+
+    this.log.debug(`${this.mac} is unknown to BlueZ; scanning for it`);
+    const startedDiscovery = !(await adapter.isDiscovering());
+    if (startedDiscovery) {
+      await adapter.startDiscovery();
+    }
+    try {
+      const device = await adapter.waitDevice(this.mac, DISCOVERY_TIMEOUT_MS);
+      await sleep(DISCOVERY_SETTLE_MS);
+      return device;
+    } finally {
+      if (startedDiscovery) {
+        await adapter.stopDiscovery().catch((error) => {
+          this.log.debug(`Could not stop discovery: ${describe(error)}`);
+        });
+      }
+    }
   }
 
   /**
