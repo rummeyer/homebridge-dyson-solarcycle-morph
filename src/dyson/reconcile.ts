@@ -6,9 +6,14 @@
  * brightness that lands slightly off is something the user fixes with one
  * movement of the slider without ever noticing why.
  *
- * What does matter is the commands people rely on being certain: on, off, and
- * the two ends of the brightness range. A lamp that stays lit after being
- * switched off is the failure nobody can work around.
+ * What is left is power. It is the one command with an unambiguous outcome, and
+ * a lamp that stays lit after being switched off is the failure nobody can work
+ * around.
+ *
+ * Brightness cannot be checked at all on this lamp, not even at the extremes:
+ * it tracks daylight by location and time, so asking for 100% and finding 88%
+ * is the lamp working correctly. That is indistinguishable from a dropped
+ * command, and resending would fight the adjustment the user wants.
  *
  * Separated from the BLE session because getting it wrong has physical
  * consequences: an earlier version compared brightness while the lamp was off,
@@ -24,22 +29,7 @@ export interface LampValues {
   kelvin?: number;
 }
 
-export interface Tolerances {
-  /** Brightness difference, in percent, worth correcting at the extremes. */
-  brightness: number;
-}
-
-export type Correction = { field: 'on'; value: boolean } | { field: 'brightness'; value: number };
-
-/**
- * Whether a brightness is one people depend on landing exactly.
- *
- * Fully off and fully bright carry meaning that a value in between does not:
- * they are asked for deliberately, and getting them wrong is noticed.
- */
-function isCritical(brightness: number): boolean {
-  return brightness <= 0 || brightness >= 100;
-}
+export type Correction = { field: 'on'; value: boolean };
 
 export interface Plan {
   corrections: Correction[];
@@ -53,7 +43,7 @@ export interface Plan {
  * @param wanted What the user last asked for. Unknown fields are left alone.
  * @param actual What the lamp reports.
  */
-export function planReconciliation(wanted: LampValues, actual: LampValues, tolerances: Tolerances): Plan {
+export function planReconciliation(wanted: LampValues, actual: LampValues): Plan {
   const corrections: Correction[] = [];
   const missed: string[] = [];
 
@@ -62,22 +52,5 @@ export function planReconciliation(wanted: LampValues, actual: LampValues, toler
     missed.push(`power (wanted ${wanted.on ? 'on' : 'off'}, lamp is ${actual.on ? 'on' : 'off'})`);
   }
 
-  // Brightness only means anything on a lit lamp. An off lamp reports no
-  // output, which would look like every command was lost, and correcting that
-  // would switch it on.
-  const shouldBeLit = wanted.on ?? actual.on ?? false;
-  if (
-    shouldBeLit &&
-    wanted.brightness !== undefined &&
-    actual.brightness !== undefined &&
-    isCritical(wanted.brightness) &&
-    Math.abs(wanted.brightness - actual.brightness) > tolerances.brightness
-  ) {
-    corrections.push({ field: 'brightness', value: wanted.brightness });
-    missed.push(`brightness (wanted ${wanted.brightness}%, lamp is ${actual.brightness}%)`);
-  }
-
-  // Colour temperature is never checked: it is always mid-range by nature, and
-  // a small error is invisible next to the cost of another read.
   return { corrections, missed };
 }

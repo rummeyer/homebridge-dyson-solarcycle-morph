@@ -96,13 +96,6 @@ const MODE_SETTLE_MS = 200;
  */
 const RECONCILE_DELAY_MS = 900;
 
-/**
- * Tolerances when checking a write landed.
- *
- * The lamp rounds what it stores, so an exact comparison would report a
- * mismatch for a command that was in fact applied.
- */
-const BRIGHTNESS_TOLERANCE_PCT = 3;
 
 /**
  * How long to wait for a slider to settle before writing.
@@ -279,8 +272,10 @@ export class DysonMorphLamp extends EventEmitter {
     this.requireConnection();
     this.desired = { ...this.desired, brightness: lumensToPercent(lumens) };
     this.patchState({ brightness: lumensToPercent(lumens) });
+    // Not reconciled: the lamp adjusts brightness to track daylight, so a value
+    // that differs from what was asked for is the lamp working, not a command
+    // that went missing.
     await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
-    this.scheduleReconcile();
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
@@ -335,9 +330,7 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
     const actual = await this.readState();
-    const { corrections, missed } = planReconciliation(this.desired, actual, {
-      brightness: BRIGHTNESS_TOLERANCE_PCT,
-    });
+    const { corrections, missed } = planReconciliation(this.desired, actual);
 
     if (corrections.length === 0) {
       this.patchState(actual);
@@ -348,9 +341,6 @@ export class DysonMorphLamp extends EventEmitter {
       switch (correction.field) {
         case 'on':
           await this.write(CHAR_POWER, Buffer.from([correction.value ? 0x01 : 0x00]));
-          break;
-        case 'brightness':
-          await this.writeUint16(CHAR_BRIGHTNESS_LM, percentToLumens(correction.value));
           break;
       }
     }

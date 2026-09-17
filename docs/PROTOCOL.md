@@ -121,6 +121,22 @@ account bearer token plus the header `X-Dyson-ApiAuthCode: 80541406` (a
 well-known constant that the endpoint accepts in place of a session code).
 `dyson-morph-pair` does this.
 
+## Brightness is not a setpoint
+
+The lamp adjusts its own brightness to track daylight, using its configured
+location and the time of day: ask for 100% and it may settle at 88%. That is the
+lamp working as intended, and it is indistinguishable from a command that was
+dropped in transit.
+
+Anything that verifies brightness by reading it back will therefore fight the
+lamp. This client checks only power, which has an unambiguous outcome, and
+treats brightness and colour temperature as fire-and-forget.
+
+Writing `13 20 01 00 00` to `2dd10021-…` is documented as leaving daylight mode
+so explicit values are accepted. Whether that also stops the tracking described
+above, and whether brightness writes land without it, is **not established** —
+the mode cannot be read back, so there is nothing to observe.
+
 ## Open questions
 
 - `2dd11004-…`, `2dd11006-…` and `2dd11007-…` are not decoded.
