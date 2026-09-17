@@ -156,16 +156,20 @@ retries with backoff (2 s, 5 s, 15 s, 30 s, then 60 s) and normally connects
 within a minute. Only worry if it never succeeds.
 
 **It connects, drops after a few seconds, and reconnects, over and over.**
-Usually the radio link, not the software. The plugin logs the signal strength
-when it connects and warns below about −80 dBm; at that level BLE hits its
-supervision timeout and the link dies. Check it directly with:
+Often the radio link rather than the software. The log carries the signal
+strength so you can tell: it is on the line reported when the lamp connects,
+again whenever it moves by more than a few dBm, and on the line reported when a
+connection is lost — which is the one that answers whether drops and a weak
+signal go together.
 
-```sh
-sudo bluetoothctl info AA:BB:CC:DD:EE:FF | grep RSSI
-```
+| Reading | |
+|---|---|
+| −60 dBm | comfortable |
+| −75 dBm | workable |
+| −85 dBm | will not hold |
 
-−60 dBm is comfortable, −75 is workable, −85 will not hold. Move the lamp or the
-Homebridge host closer to each other, or put a Bluetooth adapter nearer the lamp.
+Move the lamp or the Homebridge host closer to each other, or put a Bluetooth
+adapter nearer the lamp.
 
 **It keeps failing with `le-connection-abort-by-local` and never connects.**
 The lamp's Bluetooth stack can reach a state where it advertises normally — a

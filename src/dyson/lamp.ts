@@ -98,6 +98,14 @@ const MODE_SETTLE_MS = 200;
 const WEAK_RSSI_DBM = -80;
 
 /**
+ * Change in signal strength worth reporting.
+ *
+ * Small enough to show a lamp being moved, large enough that ordinary drift
+ * does not fill the log.
+ */
+const RSSI_REPORT_STEP_DBM = 6;
+
+/**
  * How long to wait for a slider to settle before writing. HomeKit emits several
  * values a second while dragging; only the one it stops on matters.
  */
@@ -208,6 +216,10 @@ export class DysonMorphLamp extends EventEmitter {
   private reconnectAttempt = 0;
   private reconnectTimer?: NodeJS.Timeout;
   private pollTimer?: NodeJS.Timeout;
+  /** Most recent reading, reported when the link drops. */
+  private lastRssi?: number;
+  /** Last reading actually logged, so only real changes are reported. */
+  private reportedRssi?: number;
   private manualModeSetAt = 0;
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
@@ -453,8 +465,17 @@ export class DysonMorphLamp extends EventEmitter {
     this.desired = { ...this.state };
     await this.subscribeToState();
     this.startPolling();
-    this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
-    await this.reportSignalStrength();
+    const rssi = await this.readSignalStrength();
+    this.reportedRssi = rssi;
+    this.log.info(
+      `Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}${this.describeSignal(rssi)}`,
+    );
+    if (rssi !== undefined && rssi <= WEAK_RSSI_DBM) {
+      this.log.warn(
+        `Signal from ${this.mac} is weak. At this level the connection times out and drops; ` +
+          'move the lamp or the Homebridge host closer to each other.',
+      );
+    }
     this.emit('connected');
   }
 
@@ -701,24 +722,47 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Put the link quality in the log. A weak signal and a bug in the plugin
-   * produce the same symptom — repeated disconnects — and only the number
-   * distinguishes them.
+   * Read the signal strength, remembering it for the log.
+   *
+   * A weak link and a bug in the plugin produce the same symptom — repeated
+   * disconnects — and only the number distinguishes them.
    */
-  private async reportSignalStrength(): Promise<void> {
+  private async readSignalStrength(): Promise<number | undefined> {
     const raw = await this.device?.getRSSI().catch(() => undefined);
     const rssi = typeof raw === 'string' ? Number.parseInt(raw, 10) : raw;
     if (typeof rssi !== 'number' || Number.isNaN(rssi)) {
+      return undefined;
+    }
+    this.lastRssi = rssi;
+    return rssi;
+  }
+
+  /** Describe the signal for a log line, or nothing when it is unavailable. */
+  private describeSignal(rssi: number | undefined): string {
+    return rssi === undefined ? '' : `, ${rssi} dBm${rssi <= WEAK_RSSI_DBM ? ' (weak)' : ''}`;
+  }
+
+  /**
+   * Report the signal when it has moved enough to mean something.
+   *
+   * Logging every reading would bury the log; logging none leaves the one
+   * question a user can act on — is it too far away — unanswerable.
+   */
+  private reportSignalChange(rssi: number | undefined): void {
+    if (rssi === undefined) {
       return;
     }
-    if (rssi <= WEAK_RSSI_DBM) {
-      this.log.warn(
-        `Signal from ${this.mac} is weak (${rssi} dBm). Move the lamp or the Homebridge host closer ` +
-          'to each other if the connection keeps dropping.',
-      );
-    } else {
+    const previous = this.reportedRssi;
+    if (previous !== undefined && Math.abs(rssi - previous) < RSSI_REPORT_STEP_DBM) {
       this.log.debug(`Signal from ${this.mac}: ${rssi} dBm`);
+      return;
     }
+    this.reportedRssi = rssi;
+    const trend = previous === undefined ? '' : rssi > previous ? ' (improving)' : ' (worsening)';
+    const advice = rssi <= WEAK_RSSI_DBM
+      ? ' — at this level the connection times out and drops; move the lamp or the Homebridge host closer'
+      : '';
+    this.log.info(`Signal from ${this.mac}: ${rssi} dBm${trend}${advice}`);
   }
 
   /**
@@ -795,6 +839,7 @@ export class DysonMorphLamp extends EventEmitter {
       }
       void this.enqueue(async () => {
         this.publishFromLamp(await this.readState());
+        this.reportSignalChange(await this.readSignalStrength());
       }, 'poll').catch((error: unknown) => {
         // A failed read is not a reason to drop a working connection; the next
         // poll, or a notification, will catch up.
@@ -808,7 +853,10 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
     this.connected = false;
-    this.log.warn(`Lost connection to ${this.mac} — reconnecting`);
+    this.log.warn(
+      `Lost connection to ${this.mac} — reconnecting` +
+        (this.lastRssi === undefined ? '' : ` (signal was ${this.lastRssi} dBm)`),
+    );
     this.emit('disconnected');
     if (this.running) {
       void this.teardown().then(() => this.connectLoop());
