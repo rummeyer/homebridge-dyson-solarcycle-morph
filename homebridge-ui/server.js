@@ -32,7 +32,7 @@ class MorphUiServer extends HomebridgePluginUiServer {
     this.challenges = new Map();
 
     this.onRequest('/discover', (r) => this.discover(r));
-    this.onRequest('/status', (r) => this.status(r));
+    this.onRequest('/pair-status', (r) => this.pairStatus(r));
     this.onRequest('/start-auth', (r) => this.startAuth(r));
     this.onRequest('/finish-auth', (r) => this.finishAuth(r));
     this.onRequest('/forget', (r) => this.forget(r));
@@ -93,7 +93,7 @@ class MorphUiServer extends HomebridgePluginUiServer {
   }
 
   /** Report which of the given serials already have stored credentials. */
-  async status(request) {
+  async pairStatus(request) {
     const serials = Array.isArray(request?.serials) ? request.serials : [];
     const store = this.store();
     const paired = {};
@@ -122,8 +122,7 @@ class MorphUiServer extends HomebridgePluginUiServer {
 
   /** Exchange the code for a token, then fetch and store each lamp's key. */
   async finishAuth(request) {
-    const { email, country } = this.getAccount(request);
-    const password = request?.password;
+    const { email, country, password } = this.getAccount(request);
     const otpCode = typeof request?.otpCode === 'string' ? request.otpCode.trim() : '';
     const serials = (Array.isArray(request?.serials) ? request.serials : [])
       .filter((s) => typeof s === 'string' && s.trim())
@@ -193,14 +192,16 @@ class MorphUiServer extends HomebridgePluginUiServer {
     return { message: `Removed the stored key for ${serial}.` };
   }
 
+  /** Account details come from the config block the settings page maintains. */
   getAccount(request) {
-    const email = typeof request?.email === 'string' ? request.email.trim() : '';
+    const account = request?.account ?? {};
+    const email = typeof account.email === 'string' ? account.email.trim() : '';
     const country =
-      typeof request?.country === 'string' && request.country.trim() ? request.country.trim().toUpperCase() : 'GB';
+      typeof account.country === 'string' && account.country.trim() ? account.country.trim().toUpperCase() : 'GB';
     if (!email) {
       throw new RequestError('Enter the email address of your MyDyson account.');
     }
-    return { email, country };
+    return { email, country, password: typeof account.password === 'string' ? account.password : '' };
   }
 }
 

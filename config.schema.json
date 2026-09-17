@@ -46,10 +46,65 @@
             }
           }
         }
+      },
+      "dysonAccount": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "title": "MyDyson email"
+          },
+          "password": {
+            "type": "string",
+            "title": "MyDyson password"
+          },
+          "country": {
+            "type": "string",
+            "title": "Country",
+            "maxLength": 2,
+            "default": "GB"
+          }
+        }
       }
     }
   },
   "customUi": true,
   "customUiPath": "./homebridge-ui",
-  "footerDisplay": "Keys are stored outside config.json, in the plugin's storage directory."
+  "footerDisplay": "Lamp keys are stored in the plugin's storage directory, never in config.json. Your MyDyson password is only needed while authorising \u2014 clear it afterwards.",
+  "layout": [
+    {
+      "type": "fieldset",
+      "title": "Lights",
+      "expandable": true,
+      "expanded": true,
+      "items": [
+        {
+          "key": "lights",
+          "type": "array",
+          "add": "Add light",
+          "items": [
+            {
+              "type": "div",
+              "displayFlex": true,
+              "flex-direction": "column",
+              "items": [
+                "lights[].name",
+                "lights[].mac",
+                "lights[].serial",
+                "lights[].motionSensor"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Advanced",
+      "expandable": true,
+      "items": [
+        "adapter"
+      ]
+    }
+  ]
 }

@@ -264,12 +264,25 @@ export class DysonMorphLamp extends EventEmitter {
     if (!adapter) {
       throw new Error('Bluetooth adapter is not available');
     }
-    if (!(await adapter.isDiscovering())) {
+    // Discovery is only needed until the lamp is located, and it must not be
+    // left running: a scanning radio time-slices between scan windows and
+    // connection events, which starves an established link until it hits its
+    // supervision timeout. That presents as connecting successfully and then
+    // dropping a second later, over and over.
+    const startedDiscovery = !(await adapter.isDiscovering());
+    if (startedDiscovery) {
       await adapter.startDiscovery();
     }
-
-    this.log.debug(`Waiting for ${this.mac} to advertise…`);
-    this.device = await adapter.waitDevice(this.mac);
+    try {
+      this.log.debug(`Waiting for ${this.mac} to advertise…`);
+      this.device = await adapter.waitDevice(this.mac);
+    } finally {
+      if (startedDiscovery) {
+        await adapter.stopDiscovery().catch((error) => {
+          this.log.debug(`Could not stop discovery: ${describe(error)}`);
+        });
+      }
+    }
     await this.device.connect();
     this.device.on('disconnect', () => this.handleDisconnect());
 

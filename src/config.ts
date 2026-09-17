@@ -23,8 +23,22 @@ export interface LightConfig {
 /** A lamp whose credentials are known, from the config or the credential store. */
 export type ResolvedLightConfig = LightConfig & { ltk: string; accountId: string };
 
+/**
+ * MyDyson credentials, owned by the settings page.
+ *
+ * The plugin itself never reads these: they exist so the settings page can
+ * remember who to authorise as between visits. The password is only needed
+ * while exchanging a code for a token, and the page offers to clear it after.
+ */
+export interface DysonAccountConfig {
+  email?: string;
+  password?: string;
+  country?: string;
+}
+
 export interface MorphPlatformConfig extends PlatformConfig {
   lights?: LightConfig[];
+  dysonAccount?: DysonAccountConfig;
   /** HCI adapter to use, e.g. `hci0`. Defaults to the system default adapter. */
   adapter?: string;
 }
