@@ -249,15 +249,8 @@ independent TypeScript implementation, cross-checked against that reference with
 
 ## Development
 
-```sh
-npm install
-npm run build
-npm test
-```
-
-The test suite runs without a lamp: the handshake crypto is pinned against
-vectors generated from the Python reference, and the plugin is loaded the way
-Homebridge loads it.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the build, how to try a change on
+real hardware, and how releases are published.
 
 Not affiliated with or endorsed by Dyson.
 
