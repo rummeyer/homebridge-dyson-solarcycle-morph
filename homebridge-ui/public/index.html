@@ -373,8 +373,8 @@
     delete configs[0].dysonAccount.password;
     await homebridge.updatePluginConfig(configs);
     $('morph-password').value = '';
+    // The button disappearing says it happened; a notice would only repeat that.
     refreshPasswordButton();
-    show('Password cleared. Press Save to write that to config.json. Enter it again only if you need to authorise afresh.', 'success');
   })());
 
   for (const id of ['morph-email', 'morph-password', 'morph-country']) {
