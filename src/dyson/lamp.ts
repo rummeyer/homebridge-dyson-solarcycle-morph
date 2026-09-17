@@ -276,6 +276,10 @@ export class DysonMorphLamp extends EventEmitter {
     try {
       this.log.debug(`Waiting for ${this.mac} to advertise…`);
       this.device = await adapter.waitDevice(this.mac);
+      // Stay in discovery until the link is up. BlueZ drops the device object
+      // for an unbonded, unconnected device once scanning stops, and connecting
+      // to that stale proxy fails with "interface not found in proxy object".
+      await this.device.connect();
     } finally {
       if (startedDiscovery) {
         await adapter.stopDiscovery().catch((error) => {
@@ -283,7 +287,6 @@ export class DysonMorphLamp extends EventEmitter {
         });
       }
     }
-    await this.device.connect();
     this.device.on('disconnect', () => this.handleDisconnect());
 
     await this.discoverCharacteristics(await this.device.gatt());

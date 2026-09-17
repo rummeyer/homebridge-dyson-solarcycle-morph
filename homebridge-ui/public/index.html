@@ -15,7 +15,20 @@
 <div id="morph">
   <div class="card mb-3">
     <div class="card-body">
-      <h5 class="card-title">MyDyson account</h5>
+      <h5 class="card-title">1. Your lights</h5>
+      <p class="card-text text-muted small">
+        Scanning finds nearby Dyson lights and adds them below, filling in the address and
+        serial number. Takes about 15 seconds.
+      </p>
+      <button type="button" class="btn btn-secondary" id="morph-scan">Scan for lights</button>
+      <div id="morph-scan-result" class="mt-3"></div>
+      <hr>
+      <div id="morph-status">…</div>
+    </div>
+  </div>
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">2. MyDyson account</h5>
       <p class="card-text text-muted small mb-3">
         A lamp ignores every command until it is paired, and its key is issued by Dyson against
         the account the lamp belongs to. <strong>The lamp must already be registered in the
@@ -39,6 +52,10 @@
 
       <!-- Shown while something still needs authorising -->
       <div id="morph-auth">
+        <div id="morph-needs-lights" class="alert alert-warning morph-hidden">
+          Add a light above first — pairing fetches a key for each one, so there has to be
+          something to fetch it for.
+        </div>
         <button type="button" class="btn btn-primary" id="morph-request">Request code by email</button>
         <div id="morph-code" class="mt-3 morph-hidden">
           <div class="form-group">
@@ -64,19 +81,6 @@
     </div>
   </div>
 
-  <div class="card mb-3">
-    <div class="card-body">
-      <h5 class="card-title">Lights</h5>
-      <p class="card-text text-muted small">
-        Scanning finds nearby Dyson lights and adds them below, filling in the address and
-        serial number. Takes about 15 seconds.
-      </p>
-      <button type="button" class="btn btn-secondary" id="morph-scan">Scan for lights</button>
-      <div id="morph-scan-result" class="mt-3"></div>
-      <hr>
-      <div id="morph-status">…</div>
-    </div>
-  </div>
 </div>
 
 <script>
@@ -149,6 +153,12 @@
   /** List each configured light and whether it is paired. */
   async function refreshStatus() {
     const serials = await configuredSerials();
+    // Authorising with no lights configured would fetch nothing, so say so and
+    // disable the step rather than letting it fail at the last click.
+    $('morph-needs-lights').classList.toggle('morph-hidden', serials.length > 0);
+    $('morph-request').disabled = serials.length === 0;
+    $('morph-pair').disabled = serials.length === 0;
+
     if (serials.length === 0) {
       $('morph-status').innerHTML =
         '<span class="text-muted">No lights configured yet. Scan above, or add one in the form below.</span>';
@@ -268,8 +278,14 @@
       lights.push({ name: `Dyson ${serial}`, mac, serial });
     }
     await homebridge.updatePluginConfig(configs);
-    show(`${serial} added below. Press Save to keep it.`, 'success');
     await refreshStatus();
+    const stillUnpaired = $('morph-auth').classList.contains('morph-hidden') === false;
+    show(
+      stillUnpaired
+        ? `${serial} added. Now authorise your MyDyson account below to fetch its key, then press Save.`
+        : `${serial} added. Press Save to keep it.`,
+      'success',
+    );
   }
 
   $('morph-request').addEventListener('click', () => busy($('morph-request'), async () => {
