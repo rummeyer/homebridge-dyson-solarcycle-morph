@@ -28,7 +28,11 @@ First release. Verified end to end against a Solarcycle Morph desk light
   Homebridge UI.
 - `tools/ble-probe.js`, a standalone GATT dump for inspecting a lamp without
   installing the plugin.
-- Reconnect with backoff, and a keepalive poll that keeps the BLE link up.
+- Reconnect with backoff, state followed through notifications, and the lamp
+  reported as unreachable in HomeKit while there is no link.
+- Power commands are checked and resent if they did not land. Brightness and
+  colour temperature are not: the lamp ramps and trims them itself, so a reading
+  that differs from the request is usually the lamp working.
 
 ### Requirements
 

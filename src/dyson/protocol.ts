@@ -5,37 +5,19 @@
  * Lightcycle Morph (CD06) / Solarcycle Morph (CF06). See docs/PROTOCOL.md.
  */
 
-/**
- * The lamp's GATT services.
- *
- * Verified against a Solarcycle Morph (serial prefix ABC): the characteristics
- * are spread across three services, not gathered under one as the published
- * protocol notes suggest. Characteristic UUIDs are unique on their own, so the
- * client discovers by sweeping every service rather than trusting this layout.
- */
-export const SERVICE_AUTH = '2dd10010-1c37-452d-8979-d1b4a787d0a4';
-export const SERVICE_ATTR = '2dd10020-1c37-452d-8979-d1b4a787d0a4';
-export const SERVICE_CONTROL = '2dd1fff0-1c37-452d-8979-d1b4a787d0a4';
+// Characteristics are spread across three services on this lamp, so the client
+// sweeps every service and matches on these UUIDs, which are unique on their
+// own. docs/PROTOCOL.md has the full map, including what is not used here.
 
 /** Fragmented request/response channel used for the authentication handshake. */
 export const CHAR_AUTH = '2dd10011-1c37-452d-8979-d1b4a787d0a4';
-/** Signed 1-byte RSSI, notified during the proximity probe. */
-export const CHAR_RSSI = '2dd10013-1c37-452d-8979-d1b4a787d0a4';
 /** Generic attribute write channel (see DAYLIGHT_MODE_* payloads). */
 export const CHAR_WRITE_ATTR = '2dd10021-1c37-452d-8979-d1b4a787d0a4';
 
-/** Brightness as a percentage, 1 byte. Used by lamps without daylight support. */
-export const CHAR_BRIGHTNESS_PCT = '2dd11000-1c37-452d-8979-d1b4a787d0a4';
 /** Colour temperature in Kelvin, uint16 LE. */
 export const CHAR_COLOR_TEMP = '2dd11001-1c37-452d-8979-d1b4a787d0a4';
 /** Power, 1 byte: 0 = off, 1 = on. */
 export const CHAR_POWER = '2dd11005-1c37-452d-8979-d1b4a787d0a4';
-/** Read-only, purpose unknown. Present on the Solarcycle Morph. */
-export const CHAR_UNKNOWN_11004 = '2dd11004-1c37-452d-8979-d1b4a787d0a4';
-/** Runtime / scheduled-light flags. Not decoded. */
-export const CHAR_RUNTIME = '2dd11006-1c37-452d-8979-d1b4a787d0a4';
-/** Ambient light sensor. Not decoded. */
-export const CHAR_AMBIENT = '2dd11007-1c37-452d-8979-d1b4a787d0a4';
 /** Motion events. Any non-zero byte in the payload means motion. */
 export const CHAR_MOTION = '2dd11008-1c37-452d-8979-d1b4a787d0a4';
 /** Brightness in lumens, uint16 LE. Used by CD06/CF06. */
@@ -75,8 +57,6 @@ export const MsgType = {
 
 /** Written to {@link CHAR_WRITE_ATTR} to leave daylight mode for manual control. */
 export const DAYLIGHT_MODE_DISABLE = Buffer.from([0x13, 0x20, 0x01, 0x00, 0x00]);
-/** Written to {@link CHAR_WRITE_ATTR} to re-enable daylight mode. */
-export const DAYLIGHT_MODE_ENABLE = Buffer.from([0x13, 0x20, 0x01, 0x00, 0x01]);
 
 export const MIN_KELVIN = 2700;
 export const MAX_KELVIN = 6500;
@@ -84,10 +64,10 @@ export const MIN_LUMENS = 100;
 export const MAX_LUMENS = 1000;
 
 /**
- * Default fragment capacity. The MyDyson app assumes a 20-byte ATT payload and
- * never renegotiates, so we do the same rather than trusting the actual MTU.
+ * The MyDyson app assumes a 20-byte ATT payload and never renegotiates, so we
+ * do the same rather than trusting the actual MTU.
  */
-export const FRAGMENT_CAPACITY = 20;
+const FRAGMENT_CAPACITY = 20;
 
 /** A reassembled logical message. */
 export interface DysonMessage {

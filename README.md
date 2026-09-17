@@ -152,8 +152,8 @@ accessories. In the Homebridge UI it is one toggle under the plugin's settings.
 
 **`le-connection-abort-by-local` a few times at startup.** Expected. BlueZ
 commonly aborts the first two or three attempts before one sticks. The plugin
-retries with backoff (5 s, 15 s, 30 s, then 60 s) and normally connects within a
-minute. Only worry if it never succeeds.
+retries with backoff (2 s, 5 s, 15 s, 30 s, then 60 s) and normally connects
+within a minute. Only worry if it never succeeds.
 
 **It connects, drops after a few seconds, and reconnects, over and over.**
 Usually the radio link, not the software. The plugin logs the signal strength
@@ -201,9 +201,16 @@ user Homebridge runs as, then `sudo systemctl restart dbus`:
 </busconfig>
 ```
 
-**The lamp shows 0 % brightness while off.** It reports 0 lumens when off, which
-maps to 0 %. Switching on restores the lamp's own last brightness and the next
-poll picks it up.
+**The Home app shows the lamp as "No Response".** There is no Bluetooth link
+right now. Commands are not queued while that is the case: they fail, so you
+know they did not happen. The plugin reconnects on its own and reads the lamp's
+real state when it does.
+
+**The brightness I set is not exactly what the lamp shows.** Expected. The lamp
+ramps towards a value rather than jumping, and trims it to track daylight from
+its location and the time. Only power is checked and resent, because it is the
+only value whose outcome is unambiguous — see
+[docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 **Daylight mode changed at the lamp is not reflected.** The lamp lets you write
 that setting but not read it back, so the plugin cannot know. It re-asserts

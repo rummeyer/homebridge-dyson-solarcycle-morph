@@ -45,7 +45,7 @@ export function sealBlock(key: Buffer, plaintext: Buffer, iv: Buffer = randomByt
 }
 
 /** Unpadded AES-128-CBC decryption. */
-export function openBlock(key: Buffer, iv: Buffer, ciphertext: Buffer): Buffer {
+function openBlock(key: Buffer, iv: Buffer, ciphertext: Buffer): Buffer {
   const decipher = createDecipheriv('aes-128-cbc', key, iv);
   decipher.setAutoPadding(false);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]);

@@ -56,11 +56,8 @@ const RECONNECT_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 const DISCOVERY_TIMEOUT_MS = 30_000;
 
 /**
- * Pause between starting discovery and connecting.
- *
- * Measured, not guessed: a connect issued straight after discovery starts is
- * aborted by the controller every time, while the same connect succeeds after
- * a few seconds of scanning.
+ * Pause between starting discovery and connecting. Measured, not guessed: a
+ * connect issued straight after discovery starts is aborted every time.
  */
 const DISCOVERY_SETTLE_MS = 8_000;
 
@@ -68,53 +65,37 @@ const DISCOVERY_SETTLE_MS = 8_000;
 const HANDSHAKE_TIMEOUT_MS = 30_000;
 
 /**
- * Re-assert manual mode if the last write was longer ago than this. Writing it
- * before every command would be wasteful; never writing it means the lamp
- * silently ignores us after someone used the physical daylight button.
+ * Re-assert manual mode if the last write was longer ago than this. Doing it
+ * before every command wastes a write; never doing it means the lamp ignores us
+ * after someone used the physical daylight button.
  */
 const MANUAL_MODE_TTL_MS = 60_000;
-
-/**
- * Signal strength below which the link is unreliable.
- *
- * BLE connections start timing out around here, and the symptom — connect,
- * drop, reconnect — looks like a software fault unless the number is shown.
- */
-const WEAK_RSSI_DBM = -80;
 
 /** The lamp needs a moment to apply a mode change before the next write. */
 const MODE_SETTLE_MS = 200;
 
+/** Signal strength worth warning about, so a weak link is visible in the log. */
+const WEAK_RSSI_DBM = -80;
 
 /**
- * How long after the last command to check the lamp agrees.
- *
- * Verification cannot sit in the command's own path. The write itself takes a
- * millisecond; waiting for the lamp to apply it and reading it back costs
- * several hundred more, which was most of the time it took to switch the lamp
- * off. It runs once instead, after commands stop arriving, against the state
- * the user ended up asking for.
+ * How long to wait for a slider to settle before writing. HomeKit emits several
+ * values a second while dragging; only the one it stops on matters.
+ */
+const WRITE_DEBOUNCE_MS = 400;
+
+/**
+ * How long after the last command to check the lamp agrees. Verification cannot
+ * sit in the command's own path: the write costs a millisecond, reading it back
+ * costs hundreds.
  */
 const RECONCILE_DELAY_MS = 900;
 
 /**
  * How long to disregard the lamp's own reports about a value just commanded.
- *
- * The lamp ramps rather than jumping, notifying each step on the way. Long
- * enough to cover that climb, short enough that a change made at the lamp
- * itself shows up promptly.
+ * It ramps rather than jumping, and those steps are the command happening, not
+ * news worth publishing.
  */
 const SETTLE_MS = 3_000;
-
-
-/**
- * How long to wait for a slider to settle before writing.
- *
- * Dragging brightness or colour temperature in HomeKit emits several values a
- * second. Sending each one queues writes faster than the lamp applies them, so
- * it visibly lags the slider. Only the value the user stops on matters.
- */
-const WRITE_DEBOUNCE_MS = 400;
 
 export interface LampState {
   on: boolean;
@@ -189,12 +170,8 @@ export class DysonMorphLamp extends EventEmitter {
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
 
-
   /** What the user last asked for. Reconciliation aims at this, not at guesses. */
   private desired: Partial<LampState> = {};
-
-
-
 
   constructor(options: LampOptions) {
     super();
@@ -669,11 +646,9 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Report how strong the radio link is, and say so plainly when it is weak.
-   *
-   * A marginal link presents as repeated `Connection Timeout` disconnects,
-   * which is indistinguishable from a bug in the plugin unless the signal
-   * strength is in the log next to it.
+   * Put the link quality in the log. A weak signal and a bug in the plugin
+   * produce the same symptom — repeated disconnects — and only the number
+   * distinguishes them.
    */
   private async reportSignalStrength(): Promise<void> {
     const raw = await this.device?.getRSSI().catch(() => undefined);
@@ -683,9 +658,8 @@ export class DysonMorphLamp extends EventEmitter {
     }
     if (rssi <= WEAK_RSSI_DBM) {
       this.log.warn(
-        `Signal from ${this.mac} is weak (${rssi} dBm). Below about ${WEAK_RSSI_DBM} dBm the ` +
-          'connection times out and drops repeatedly. Move the lamp or the Homebridge host closer, ' +
-          'or put a Bluetooth adapter nearer the lamp.',
+        `Signal from ${this.mac} is weak (${rssi} dBm). Move the lamp or the Homebridge host closer ` +
+          'to each other if the connection keeps dropping.',
       );
     } else {
       this.log.debug(`Signal from ${this.mac}: ${rssi} dBm`);
