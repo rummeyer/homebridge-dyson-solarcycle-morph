@@ -110,7 +110,6 @@ const RECONCILE_DELAY_MS = 900;
  * mismatch for a command that was in fact applied.
  */
 const BRIGHTNESS_TOLERANCE_PCT = 3;
-const KELVIN_TOLERANCE = 120;
 
 /**
  * How long to wait for a slider to settle before writing.
@@ -310,8 +309,9 @@ export class DysonMorphLamp extends EventEmitter {
     if (this.deferWhileOffline({ kelvin: clamped })) {
       return;
     }
+    // Not reconciled: a colour temperature that lands slightly off is invisible,
+    // and checking it would cost a read on a link that is not always there.
     await this.writes.schedule(CHAR_COLOR_TEMP, () => this.writeUint16(CHAR_COLOR_TEMP, clamped));
-    this.scheduleReconcile();
   }
 
   private async writeUint16(uuid: string, value: number): Promise<void> {
@@ -344,7 +344,6 @@ export class DysonMorphLamp extends EventEmitter {
     const actual = await this.readState();
     const { corrections, missed } = planReconciliation(this.desired, actual, {
       brightness: BRIGHTNESS_TOLERANCE_PCT,
-      kelvin: KELVIN_TOLERANCE,
     });
 
     if (corrections.length === 0) {
@@ -359,9 +358,6 @@ export class DysonMorphLamp extends EventEmitter {
           break;
         case 'brightness':
           await this.writeUint16(CHAR_BRIGHTNESS_LM, percentToLumens(correction.value));
-          break;
-        case 'kelvin':
-          await this.writeUint16(CHAR_COLOR_TEMP, correction.value);
           break;
       }
     }
