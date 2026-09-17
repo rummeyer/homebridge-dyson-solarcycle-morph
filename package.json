@@ -17,7 +17,7 @@
     "dyson-morph-pair": "dist/cli/pair.js"
   },
   "engines": {
-    "node": "^22.12.0 || ^24.0.0 || ^26.0.0",
+    "node": "^22.18.0 || ^24.0.0 || ^26.0.0",
     "homebridge": "^2.0.0"
   },
   "keywords": [
@@ -36,7 +36,7 @@
     "build": "tsc && chmod +x dist/cli/pair.js",
     "watch": "tsc --watch",
     "clean": "rm -rf dist",
-    "test": "node --test --experimental-strip-types test/*.test.ts",
+    "test": "node --test test/*.test.ts",
     "prepublishOnly": "npm run clean && npm run build && npm test",
     "prepare": "npm run build"
   },

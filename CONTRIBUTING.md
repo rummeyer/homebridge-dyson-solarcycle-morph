@@ -8,6 +8,15 @@ npm run build
 npm test
 ```
 
+The tests run TypeScript directly, which needs Node 22.18 or newer — the first
+version to strip types without a flag. `npm` runs scripts with **its own** Node,
+not whichever one is first on your `PATH`, so an old npm alongside a current
+node fails here with `node: bad option: --test`. Check with:
+
+```sh
+npm exec -- node -v
+```
+
 The tests run without a lamp. The handshake crypto is pinned against vectors
 generated from the Python reference implementation, the decision modules
 (reconciliation, queueing, debouncing, settling) are tested directly, and the
