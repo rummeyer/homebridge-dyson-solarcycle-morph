@@ -5,8 +5,17 @@
  * Lightcycle Morph (CD06) / Solarcycle Morph (CF06). See docs/PROTOCOL.md.
  */
 
-/** Primary Dyson GATT service. All characteristics below live under it. */
-export const SERVICE_UUID = '2dd10010-1c37-452d-8979-d1b4a787d0a4';
+/**
+ * The lamp's GATT services.
+ *
+ * Verified against a Solarcycle Morph (serial prefix ABC): the characteristics
+ * are spread across three services, not gathered under one as the published
+ * protocol notes suggest. Characteristic UUIDs are unique on their own, so the
+ * client discovers by sweeping every service rather than trusting this layout.
+ */
+export const SERVICE_AUTH = '2dd10010-1c37-452d-8979-d1b4a787d0a4';
+export const SERVICE_ATTR = '2dd10020-1c37-452d-8979-d1b4a787d0a4';
+export const SERVICE_CONTROL = '2dd1fff0-1c37-452d-8979-d1b4a787d0a4';
 
 /** Fragmented request/response channel used for the authentication handshake. */
 export const CHAR_AUTH = '2dd10011-1c37-452d-8979-d1b4a787d0a4';
@@ -21,6 +30,8 @@ export const CHAR_BRIGHTNESS_PCT = '2dd11000-1c37-452d-8979-d1b4a787d0a4';
 export const CHAR_COLOR_TEMP = '2dd11001-1c37-452d-8979-d1b4a787d0a4';
 /** Power, 1 byte: 0 = off, 1 = on. */
 export const CHAR_POWER = '2dd11005-1c37-452d-8979-d1b4a787d0a4';
+/** Read-only, purpose unknown. Present on the Solarcycle Morph. */
+export const CHAR_UNKNOWN_11004 = '2dd11004-1c37-452d-8979-d1b4a787d0a4';
 /** Runtime / scheduled-light flags. Not decoded. */
 export const CHAR_RUNTIME = '2dd11006-1c37-452d-8979-d1b4a787d0a4';
 /** Ambient light sensor. Not decoded. */

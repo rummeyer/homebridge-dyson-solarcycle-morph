@@ -12,24 +12,45 @@ what is verified from what is assumed.
 
 ## GATT layout
 
-All characteristics live under service `2dd10010-1c37-452d-8979-d1b4a787d0a4`.
+**Observed on a Solarcycle Morph** (serial `ABC-EU-…`, advertised name = serial),
+which differs from the published notes in two ways worth knowing:
 
-| UUID | Access | Format | Meaning |
+Characteristics are spread over **three** services, not one:
+
+| Service | Characteristics |
+|---|---|
+| `2dd10010-…` | `2dd10011` auth, `2dd10013` RSSI |
+| `2dd10020-…` | `2dd10021` attribute write |
+| `2dd1fff0-…` | `2dd11000`, `01`, `04`, `05`, `06`, `07`, `08`, `09` |
+
+The client therefore discovers by sweeping every service and matching on the
+characteristic UUID, which is unique on its own.
+
+| UUID | Flags (observed) | Format | Meaning |
 |---|---|---|---|
-| `2dd10011-…` | read/write/notify | framed messages | Authentication channel |
-| `2dd10013-…` | notify | int8 | RSSI proximity probe |
-| `2dd10021-…` | write | attribute TLV | Attribute writes (daylight mode) |
-| `2dd11000-…` | read/write | uint8 | Brightness 0–100 % (lamps without daylight) |
-| `2dd11001-…` | read/write | uint16 LE | Colour temperature, 2700–6500 K |
-| `2dd11005-…` | read/write | uint8 | Power: 0 = off, 1 = on |
-| `2dd11006-…` | read/notify | — | Runtime / schedule flags, not decoded |
-| `2dd11007-…` | read/notify | — | Ambient sensor, not decoded |
-| `2dd11008-…` | notify | bytes | Motion: any non-zero byte = detected |
-| `2dd11009-…` | read/write/notify | uint16 LE | Brightness 100–1000 lm (CD06/CF06) |
+| `2dd10011-…` | write-without-response, notify | framed messages | Authentication channel |
+| `2dd10013-…` | read, notify | int8 | RSSI, readable **without** auth |
+| `2dd10021-…` | write-without-response, notify | attribute TLV | Attribute writes (daylight mode) |
+| `2dd11000-…` | read, write-without-response, notify | uint8 | Brightness 0–100 % (lamps without daylight) |
+| `2dd11001-…` | read, write-without-response, notify | uint16 LE | Colour temperature, 2700–6500 K |
+| `2dd11004-…` | read | — | Undocumented, not decoded |
+| `2dd11005-…` | read, write-without-response, notify | uint8 | Power: 0 = off, 1 = on |
+| `2dd11006-…` | read, write-without-response, notify | — | Runtime / schedule flags, not decoded |
+| `2dd11007-…` | read, write-without-response, notify | — | Ambient sensor, not decoded |
+| `2dd11008-…` | read, notify | bytes | Motion: any non-zero byte = detected |
+| `2dd11009-…` | read, write-without-response, notify | uint16 LE | Brightness 100–1000 lm (CD06/CF06) |
 
-Power is written **without** response. Brightness, colour temperature and
-daylight-mode writes must use **write-with-response**; the lamp silently
-discards unacknowledged ones.
+The published notes say brightness, colour temperature and daylight-mode writes
+must be **acknowledged** (`write-with-response`), because the lamp otherwise
+discards them. But this lamp declares no `write` flag at all — only
+`write-without-response` — so BlueZ would reject an acknowledged write. The
+client picks the mode from the advertised flags per characteristic instead of
+assuming either. Whether unacknowledged writes actually stick on this model is
+**still unverified**.
+
+Every characteristic except `2dd10013` (RSSI) returns `Operation Not Authorized`
+for reads and notifications until the handshake below completes — confirmed on
+hardware.
 
 Before writing brightness or colour temperature, write
 `13 20 01 00 00` to `2dd10021-…` to leave daylight mode, then wait ~200 ms.

@@ -10,7 +10,7 @@ import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 
 import { createBluetooth } from 'node-ble';
-import type { Adapter, Device, GattCharacteristic, GattService } from 'node-ble';
+import type { Adapter, Device, GattCharacteristic, GattServer } from 'node-ble';
 
 import { buildReauthPayloadA, buildReauthPayloadC, deriveAesKey, parseReauthPayloadB } from './crypto.js';
 import {
@@ -26,11 +26,23 @@ import {
   MessageAssembler,
   MIN_KELVIN,
   MsgType,
-  SERVICE_UUID,
   fragmentMessage,
   lumensToPercent,
   percentToLumens,
 } from './protocol.js';
+
+/** Characteristics we look for. Anything else the lamp exposes is ignored. */
+const WANTED_CHARACTERISTICS = new Set([
+  CHAR_AUTH,
+  CHAR_POWER,
+  CHAR_BRIGHTNESS_LM,
+  CHAR_COLOR_TEMP,
+  CHAR_WRITE_ATTR,
+  CHAR_MOTION,
+]);
+
+/** Without these there is no point continuing. */
+const REQUIRED_CHARACTERISTICS = [CHAR_AUTH, CHAR_POWER];
 
 /** Delays between reconnect attempts; the last value repeats. */
 const RECONNECT_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000];
@@ -103,6 +115,8 @@ export class DysonMorphLamp extends EventEmitter {
   private adapter?: Adapter;
   private device?: Device;
   private chars: Partial<Record<string, GattCharacteristic>> = {};
+  /** Per-characteristic write mode, derived from the flags the lamp advertises. */
+  private writeTypes: Partial<Record<string, 'request' | 'command'>> = {};
 
   private readonly assembler = new MessageAssembler();
   private readonly waiters = new Map<number, (message: DysonMessage) => void>();
@@ -177,8 +191,7 @@ export class DysonMorphLamp extends EventEmitter {
 
   async setPower(on: boolean): Promise<void> {
     await this.enqueue(async () => {
-      // Power uses write-without-response; the lamp never acknowledges it.
-      await this.characteristic(CHAR_POWER).writeValueWithoutResponse(Buffer.from([on ? 0x01 : 0x00]));
+      await this.write(CHAR_POWER, Buffer.from([on ? 0x01 : 0x00]));
       this.patchState({ on });
     });
   }
@@ -190,7 +203,7 @@ export class DysonMorphLamp extends EventEmitter {
       await this.ensureManualMode();
       const value = Buffer.alloc(2);
       value.writeUInt16LE(lumens);
-      await this.characteristic(CHAR_BRIGHTNESS_LM).writeValueWithResponse(value);
+      await this.write(CHAR_BRIGHTNESS_LM, value);
       this.patchState({ brightness: lumensToPercent(lumens) });
     });
   }
@@ -201,7 +214,7 @@ export class DysonMorphLamp extends EventEmitter {
       await this.ensureManualMode();
       const value = Buffer.alloc(2);
       value.writeUInt16LE(clamped);
-      await this.characteristic(CHAR_COLOR_TEMP).writeValueWithResponse(value);
+      await this.write(CHAR_COLOR_TEMP, value);
       this.patchState({ kelvin: clamped });
     });
   }
@@ -243,11 +256,7 @@ export class DysonMorphLamp extends EventEmitter {
     await this.device.connect();
     this.device.on('disconnect', () => this.handleDisconnect());
 
-    const gatt = await this.device.gatt();
-    const service: GattService = await gatt.getPrimaryService(SERVICE_UUID);
-    for (const uuid of [CHAR_AUTH, CHAR_POWER, CHAR_BRIGHTNESS_LM, CHAR_COLOR_TEMP, CHAR_WRITE_ATTR, CHAR_MOTION]) {
-      this.chars[uuid] = await service.getCharacteristic(uuid);
-    }
+    await this.discoverCharacteristics(await this.device.gatt());
 
     const auth = this.characteristic(CHAR_AUTH);
     auth.on('valuechanged', (buffer) => this.handleAuthFragment(buffer));
@@ -269,6 +278,48 @@ export class DysonMorphLamp extends EventEmitter {
     this.keepaliveTimer = setInterval(() => void this.keepalive(), KEEPALIVE_INTERVAL_MS);
     this.log.info(`Connected to Dyson Morph at ${this.mac}`);
     this.emit('connected');
+  }
+
+  /**
+   * Locate the characteristics we need, wherever the firmware puts them.
+   *
+   * The published protocol notes place everything under one service, but the
+   * Solarcycle Morph spreads them across three (`2dd10010` for auth and RSSI,
+   * `2dd10020` for attribute writes, `2dd1fff0` for the control values). Rather
+   * than hard-coding a layout that varies by model, we sweep every service and
+   * match on characteristic UUID, which is unique regardless of its parent.
+   */
+  private async discoverCharacteristics(gatt: GattServer): Promise<void> {
+    this.chars = {};
+    this.writeTypes = {};
+
+    for (const serviceUuid of await gatt.services()) {
+      const service = await gatt.getPrimaryService(serviceUuid);
+      for (const charUuid of await service.characteristics()) {
+        if (!WANTED_CHARACTERISTICS.has(charUuid)) {
+          continue;
+        }
+        const characteristic = await service.getCharacteristic(charUuid);
+        this.chars[charUuid] = characteristic;
+
+        // The Morph declares its control characteristics write-without-response
+        // only; asking BlueZ for an acknowledged write would be rejected. Other
+        // models do offer `write`, so take whichever the firmware advertises.
+        const flags = await characteristic.getFlags().catch(() => [] as string[]);
+        this.writeTypes[charUuid] = flags.includes('write') ? 'request' : 'command';
+        this.log.debug(`Found ${charUuid} in service ${serviceUuid} [${flags.join(', ')}]`);
+      }
+    }
+
+    const missing = REQUIRED_CHARACTERISTICS.filter((uuid) => !this.chars[uuid]);
+    if (missing.length > 0) {
+      throw new Error(`${this.mac} is missing required characteristics: ${missing.join(', ')} — is this a Dyson Morph?`);
+    }
+  }
+
+  /** Write using whichever acknowledgement mode the characteristic supports. */
+  private async write(uuid: string, value: Buffer): Promise<void> {
+    await this.characteristic(uuid).writeValue(value, { type: this.writeTypes[uuid] ?? 'command' });
   }
 
   /**
@@ -310,9 +361,8 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   private async sendMessage(type: number, payload?: Buffer): Promise<void> {
-    const auth = this.characteristic(CHAR_AUTH);
     for (const fragment of fragmentMessage(type, payload)) {
-      await auth.writeValueWithoutResponse(fragment);
+      await this.write(CHAR_AUTH, fragment);
     }
   }
 
@@ -339,11 +389,10 @@ export class DysonMorphLamp extends EventEmitter {
     if (Date.now() - this.manualModeSetAt < MANUAL_MODE_TTL_MS) {
       return;
     }
-    const attr = this.chars[CHAR_WRITE_ATTR];
-    if (!attr) {
+    if (!this.chars[CHAR_WRITE_ATTR]) {
       return;
     }
-    await attr.writeValueWithResponse(DAYLIGHT_MODE_DISABLE);
+    await this.write(CHAR_WRITE_ATTR, DAYLIGHT_MODE_DISABLE);
     await sleep(MODE_SETTLE_MS);
     this.manualModeSetAt = Date.now();
   }
@@ -394,6 +443,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.connected = false;
     this.assembler.reset();
     this.waiters.clear();
+    this.writeTypes = {};
     clearInterval(this.keepaliveTimer);
     for (const characteristic of Object.values(this.chars)) {
       characteristic?.removeAllListeners('valuechanged');
