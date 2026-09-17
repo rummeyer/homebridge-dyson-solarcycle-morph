@@ -61,6 +61,14 @@ const HANDSHAKE_TIMEOUT_MS = 30_000;
  */
 const MANUAL_MODE_TTL_MS = 60_000;
 
+/**
+ * Signal strength below which the link is unreliable.
+ *
+ * BLE connections start timing out around here, and the symptom — connect,
+ * drop, reconnect — looks like a software fault unless the number is shown.
+ */
+const WEAK_RSSI_DBM = -80;
+
 /** The lamp needs a moment to apply a mode change before the next write. */
 const MODE_SETTLE_MS = 200;
 
@@ -286,6 +294,7 @@ export class DysonMorphLamp extends EventEmitter {
     await this.refreshState();
     this.keepaliveTimer = setInterval(() => void this.keepalive(), KEEPALIVE_INTERVAL_MS);
     this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
+    await this.reportSignalStrength();
     this.emit('connected');
   }
 
@@ -440,6 +449,30 @@ export class DysonMorphLamp extends EventEmitter {
     this.patchState(patch);
   }
 
+  /**
+   * Report how strong the radio link is, and say so plainly when it is weak.
+   *
+   * A marginal link presents as repeated `Connection Timeout` disconnects,
+   * which is indistinguishable from a bug in the plugin unless the signal
+   * strength is in the log next to it.
+   */
+  private async reportSignalStrength(): Promise<void> {
+    const raw = await this.device?.getRSSI().catch(() => undefined);
+    const rssi = typeof raw === 'string' ? Number.parseInt(raw, 10) : raw;
+    if (typeof rssi !== 'number' || Number.isNaN(rssi)) {
+      return;
+    }
+    if (rssi <= WEAK_RSSI_DBM) {
+      this.log.warn(
+        `Signal from ${this.mac} is weak (${rssi} dBm). Below about ${WEAK_RSSI_DBM} dBm the ` +
+          'connection times out and drops repeatedly. Move the lamp or the Homebridge host closer, ' +
+          'or put a Bluetooth adapter nearer the lamp.',
+      );
+    } else {
+      this.log.debug(`Signal from ${this.mac}: ${rssi} dBm`);
+    }
+  }
+
   private async keepalive(): Promise<void> {
     if (!this.connected) {
       return;
@@ -458,7 +491,7 @@ export class DysonMorphLamp extends EventEmitter {
     }
     this.connected = false;
     clearInterval(this.keepaliveTimer);
-    this.log.warn(`Lost connection to ${this.mac}`);
+    this.log.warn(`Lost connection to ${this.mac} — reconnecting`);
     this.emit('disconnected');
     if (this.running) {
       void this.teardown().then(() => this.connectLoop());

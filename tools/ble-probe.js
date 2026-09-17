@@ -9,7 +9,7 @@
  * and watches for notifications. Use this to confirm the documented UUIDs
  * before trusting them, and to see whether unauthenticated reads are allowed.
  */
-const { createBluetooth } = require('node-ble');
+import { createBluetooth } from 'node-ble';
 
 const MAC = (process.argv[2] || '').toUpperCase();
 const WATCH_SECONDS = Number(process.argv[3] || 20);

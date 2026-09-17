@@ -6,11 +6,14 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { test } from 'node:test';
-import { createRequire } from 'node:module';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const require = createRequire(import.meta.url);
+const readJson = (path: string) => JSON.parse(readFileSync(new URL(path, import.meta.url), 'utf8'));
+const load = (file: string) => import(pathToFileURL(resolve(file)).href);
 
 class FakeCharacteristic {
   handlers: Record<string, unknown> = {};
@@ -51,11 +54,12 @@ class FakeAccessory {
   }
 }
 
-function fakeApi() {
+function fakeApi(storagePath: string = mkdtempSync(join(tmpdir(), 'morph-test-'))) {
   const api = new EventEmitter() as unknown as Record<string, unknown> & EventEmitter;
   const registered: { registered: unknown[][]; unregistered: unknown[][] } = { registered: [], unregistered: [] };
   Object.assign(api, {
     platformAccessory: FakeAccessory,
+    user: { storagePath: () => storagePath },
     hap: {
       uuid: { generate: (s: string) => `uuid:${s}` },
       // The plugin only uses these as opaque keys, so their names suffice.
@@ -67,11 +71,11 @@ function fakeApi() {
     unregisterPlatformAccessories: (_p: string, _n: string, a: unknown[]) => registered.unregistered.push(a),
     updatePlatformAccessories: () => {},
   });
-  return { api, registered };
+  return { api, registered, storagePath };
 }
 
-/** Give the lamp's background connect attempt time to fail and unwind. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 150));
+/** Give async device discovery and the lamp's background connect time to settle. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 250));
 
 const fakeLog = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, log: () => {}, success: () => {} };
 
@@ -85,11 +89,11 @@ const light = {
 
 test('Homebridge can load the built entry point and register the platform', async () => {
   // Mirrors homebridge/dist/plugin.js: dynamic import, then the default export
-  // (falling back to a nested default for CommonJS interop).
-  const namespace = await import(pathToFileURL(resolve('dist/index.js')).href);
+  // (falling back to a nested default, which only CommonJS builds need).
+  const namespace = await load('dist/index.js');
   const exported = namespace.default;
   const initializer = typeof exported === 'function' ? exported : exported?.default;
-  assert.equal(typeof exported, 'function', 'module.exports is the initializer itself');
+  assert.equal(typeof exported, 'function', 'the default export is the initializer itself');
   assert.equal(typeof initializer, 'function');
 
   const { api } = fakeApi();
@@ -101,18 +105,19 @@ test('Homebridge can load the built entry point and register the platform', asyn
   assert.deepEqual(seen, ['homebridge-dyson-solarcycle-morph', 'DysonSolarcycleMorph']);
 
   // config.schema.json's pluginAlias is what Homebridge UI writes into config.json.
-  assert.equal(require('../config.schema.json').pluginAlias, seen![1]);
+  assert.equal(readJson('../config.schema.json').pluginAlias, seen![1]);
 
   // package.json's name is the plugin name Homebridge registers accessories under.
-  assert.equal(require('../package.json').name, seen![0]);
+  assert.equal(readJson('../package.json').name, seen![0]);
 });
 
 test('a configured light produces a lightbulb accessory with working handlers', async () => {
-  const { MorphPlatform } = require('../dist/platform.js');
+  const { MorphPlatform } = await load('dist/platform.js');
   const { api, registered } = fakeApi();
 
   new MorphPlatform(fakeLog, { platform: 'DysonSolarcycleMorph', lights: [light] }, api);
   api.emit('didFinishLaunching');
+  await settle();
 
   assert.equal(registered.registered.length, 1, 'one accessory registered');
   const accessory = registered.registered[0]![0] as FakeAccessory;
@@ -137,17 +142,18 @@ test('a configured light produces a lightbulb accessory with working handlers', 
 });
 
 test('the motion sensor is added only when enabled', async () => {
-  const { MorphPlatform } = require('../dist/platform.js');
+  const { MorphPlatform } = await load('dist/platform.js');
   const { api, registered } = fakeApi();
   new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, motionSensor: true }] }, api);
   api.emit('didFinishLaunching');
+  await settle();
   assert.ok((registered.registered[0]![0] as FakeAccessory).getService('MotionSensor'));
   api.emit('shutdown');
   await settle();
 });
 
-test('an invalid light is skipped instead of crashing the bridge', () => {
-  const { MorphPlatform } = require('../dist/platform.js');
+test('an invalid light is skipped instead of crashing the bridge', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
   const { api, registered } = fakeApi();
   const errors: string[] = [];
   new MorphPlatform(
@@ -156,6 +162,62 @@ test('an invalid light is skipped instead of crashing the bridge', () => {
     api,
   );
   api.emit('didFinishLaunching');
+  await settle();
   assert.equal(registered.registered.length, 0);
   assert.ok(errors.some((e) => e.includes('.mac')), 'the MAC problem is reported');
+});
+
+test('a light with no stored credentials is skipped with a pairing hint', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  const errors: string[] = [];
+  const { ltk: _ltk, accountId: _accountId, ...unpaired } = light;
+
+  new MorphPlatform({ ...fakeLog, error: (m: string) => errors.push(m) }, { platform: 'x', lights: [unpaired] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+
+  assert.equal(registered.registered.length, 0, 'no accessory without credentials');
+  assert.ok(errors.some((e) => e.includes('not paired yet')), `expected a pairing hint, got ${errors.join(' | ')}`);
+});
+
+test('credentials stored by the settings UI are used when the config omits them', async () => {
+  const { CredentialStore } = await load('dist/dyson/credentials.js');
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered, storagePath } = fakeApi();
+  const { ltk: _ltk, accountId: _accountId, ...unpaired } = light;
+
+  // Exactly what the settings page writes.
+  await new CredentialStore(storagePath, 'homebridge-dyson-solarcycle-morph').set(light.serial, {
+    ltk: light.ltk,
+    accountId: light.accountId,
+  });
+
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [unpaired] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+
+  assert.equal(registered.registered.length, 1, 'the stored key was picked up');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('a serial is matched case-insensitively against the store', async () => {
+  const { CredentialStore } = await load('dist/dyson/credentials.js');
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered, storagePath } = fakeApi();
+  const { ltk: _ltk, accountId: _accountId, ...unpaired } = light;
+
+  await new CredentialStore(storagePath, 'homebridge-dyson-solarcycle-morph').set(light.serial.toLowerCase(), {
+    ltk: light.ltk,
+    accountId: light.accountId,
+  });
+
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [unpaired] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+
+  assert.equal(registered.registered.length, 1);
+  api.emit('shutdown');
+  await settle();
 });

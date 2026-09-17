@@ -2,9 +2,9 @@ import type {
   CharacteristicValue,
   PlatformAccessory,
   Service,
-} from 'homebridge' with { 'resolution-mode': 'import' };
+} from 'homebridge';
 
-import type { LightConfig } from './config.js';
+import type { ResolvedLightConfig } from './config.js';
 import { DysonMorphLamp } from './dyson/lamp.js';
 import { kelvinToMired, miredToKelvin, MAX_KELVIN, MIN_KELVIN } from './dyson/protocol.js';
 import type { MorphPlatform } from './platform.js';
@@ -25,7 +25,7 @@ export class MorphAccessory {
   constructor(
     private readonly platform: MorphPlatform,
     private readonly accessory: PlatformAccessory,
-    private readonly config: LightConfig,
+    private readonly config: ResolvedLightConfig,
   ) {
     const { Service, Characteristic } = this.platform.api.hap;
 

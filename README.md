@@ -35,7 +35,7 @@ Everything after pairing is local. The plugin never touches the network again.
   This uses [`node-ble`](https://github.com/chrvadala/node-ble), which talks to
   BlueZ over D-Bus, so **macOS and Windows will not work**.
 - Node.js 20.19+ / 22.12+ / 24+.
-- Homebridge 1.8+ or 2.x.
+- Homebridge 2.x.
 
 Developed and verified against a Solarcycle Morph desk light on Raspberry Pi OS
 Bookworm, BlueZ 5.66, Homebridge 2.4.
@@ -81,26 +81,43 @@ sudo -u homebridge /opt/homebridge/bin/npm install homebridge-dyson-solarcycle-m
 Installing into the wrong prefix is a quiet failure: npm reports success and
 Homebridge never sees the plugin.
 
-## 3. Pair
+## 3. Pair, in the Homebridge UI
+
+Open the plugin's settings. The page walks through three things:
+
+1. **Scan for lights.** Finds nearby Dyson lights and adds them to the
+   configuration, filling in the address and serial number for you. You can skip
+   this and type them by hand if you already did step 1.
+2. **Authorise your MyDyson account.** Enter your email, password and country,
+   request a code, and enter the code Dyson emails you.
+3. **Check the result.** Paired lights are listed with the date they were
+   authorised, and can be un-paired again.
+
+Save the configuration and restart Homebridge.
+
+**The key never enters `config.json`.** It is written to the plugin's own
+storage directory, so the file you can open in the UI — and paste into a support
+thread — contains nothing sensitive.
+
+### Without the Homebridge UI
+
+`dyson-morph-pair` does the same thing from a terminal:
 
 ```sh
-dyson-morph-pair --serial ABC-EU-XXXXXXXX --mac AA:BB:CC:DD:EE:FF --country DE
+dyson-morph-pair --serial ABC-EU-XXXXXXXX --country DE
 ```
 
-It asks for your Dyson email, your password, and a one-time code Dyson emails
-you. Then it prints a config block ready to paste.
+Pass `--storage` if your Homebridge storage directory is not `~/.homebridge`,
+and `--debug` to see every request and response.
 
-**Run this in a real terminal.** It reads from stdin interactively, so launching
+**Run it in a real terminal.** It reads from stdin interactively, so launching
 it from an editor, an agent or a CI shell prints the prompts but never receives
 your answers — every field arrives empty and Dyson rejects the login with a
 misleading `401 Unable to authenticate user`.
 
-Add `--debug` to see every request and response. Passwords, tokens and keys are
-redacted; your email address is not.
-
 ## 4. Configure
 
-Paste the block into the `platforms` array of your `config.json`:
+Scanning writes this for you; by hand it looks like:
 
 ```json
 {
@@ -110,8 +127,6 @@ Paste the block into the `platforms` array of your `config.json`:
       "name": "Desk Light",
       "mac": "AA:BB:CC:DD:EE:FF",
       "serial": "ABC-EU-XXXXXXXX",
-      "ltk": "…",
-      "accountId": "…",
       "motionSensor": true
     }
   ]
@@ -121,18 +136,17 @@ Paste the block into the `platforms` array of your `config.json`:
 | Field | |
 |---|---|
 | `name` | What the lamp is called in HomeKit. |
-| `mac` | BLE address from step 1. |
-| `serial` | Identifies the accessory to HomeKit. Changing it creates a new one. |
-| `ltk` | Long-term key from pairing. |
-| `accountId` | Dyson account UUID from pairing. |
+| `mac` | BLE address from the scan. |
+| `serial` | Identifies the accessory to HomeKit and keys its stored credentials. |
 | `motionSensor` | Expose the lamp's motion detector as a HomeKit sensor. Default `false`. |
+
+Credentials are not configured here. For an unattended setup you may still set
+`ltk` and `accountId` explicitly, and they then take precedence over anything
+stored — supply both or neither.
 
 **Running it as a child bridge is recommended.** Bluetooth links drop and
 reconnect; in a child bridge that churn stays isolated from your other
 accessories. In the Homebridge UI it is one toggle under the plugin's settings.
-
-**Treat the LTK like a password.** Anyone holding it can control the lamp from
-within Bluetooth range. Keep `config.json` readable only by Homebridge.
 
 ## Troubleshooting
 
@@ -141,8 +155,24 @@ commonly aborts the first two or three attempts before one sticks. The plugin
 retries with backoff (5 s, 15 s, 30 s, then 60 s) and normally connects within a
 minute. Only worry if it never succeeds.
 
+**It connects, drops after a few seconds, and reconnects, over and over.**
+Usually the radio link, not the software. The plugin logs the signal strength
+when it connects and warns below about −80 dBm; at that level BLE hits its
+supervision timeout and the link dies. Check it directly with:
+
+```sh
+sudo bluetoothctl info AA:BB:CC:DD:EE:FF | grep RSSI
+```
+
+−60 dBm is comfortable, −75 is workable, −85 will not hold. Move the lamp or the
+Homebridge host closer to each other, or put a Bluetooth adapter nearer the lamp.
+
 **Everything reports `Operation Not Authorized`.** The handshake did not
 complete. Look for `Handshake with … complete` in the log.
+
+**`… is not paired yet`.** No key is stored for that serial. Open the plugin's
+settings in the Homebridge UI and authorise your account there. Check the serial
+matches the lamp exactly — it is what the stored key is filed under.
 
 **`PayloadB failed HMAC verification`.** The stored LTK is wrong or corrupted.
 Re-run `dyson-morph-pair`.

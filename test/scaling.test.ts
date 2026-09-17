@@ -50,12 +50,19 @@ const valid = {
   name: 'Desk',
   mac: 'AA:BB:CC:DD:EE:FF',
   serial: 'ABC-DE-12345678',
+};
+
+const credentials = {
   ltk: 'deadbeef',
   accountId: '12345678-90ab-cdef-1234-567890abcdef',
 };
 
-test('a complete config validates', () => {
+test('a config without credentials validates — they come from the store', () => {
   assert.deepEqual(validateLightConfig(valid, 0), []);
+});
+
+test('a config that overrides both credentials validates', () => {
+  assert.deepEqual(validateLightConfig({ ...valid, ...credentials }, 0), []);
 });
 
 test('a malformed MAC is rejected', () => {
@@ -64,15 +71,22 @@ test('a malformed MAC is rejected', () => {
   assert.match(problems[0]!, /lights\[0\]\.mac/);
 });
 
-test('an odd-length or non-hex LTK is rejected', () => {
-  assert.match(validateLightConfig({ ...valid, ltk: 'abc' }, 1)[0]!, /lights\[1\]\.ltk/);
-  assert.match(validateLightConfig({ ...valid, ltk: 'zz' }, 0)[0]!, /ltk/);
+test('a supplied LTK is still checked for shape', () => {
+  assert.match(validateLightConfig({ ...valid, ...credentials, ltk: 'abc' }, 1)[0]!, /lights\[1\]\.ltk/);
+  assert.match(validateLightConfig({ ...valid, ...credentials, ltk: 'zz' }, 0)[0]!, /ltk/);
 });
 
-test('a missing account ID is rejected', () => {
-  assert.match(validateLightConfig({ ...valid, accountId: 'nope' }, 0)[0]!, /accountId/);
+test('a supplied account ID is still checked for shape', () => {
+  assert.match(validateLightConfig({ ...valid, ...credentials, accountId: 'nope' }, 0)[0]!, /accountId/);
 });
 
-test('every missing field is reported at once', () => {
-  assert.equal(validateLightConfig({}, 0).length, 5);
+test('supplying only one credential is rejected', () => {
+  // Half an override would silently fall back for the other half, which is a
+  // confusing way to end up using a key that does not match the account.
+  assert.match(validateLightConfig({ ...valid, ltk: 'deadbeef' }, 0)[0]!, /only one of ltk\/accountId/);
+  assert.match(validateLightConfig({ ...valid, accountId: credentials.accountId }, 0)[0]!, /only one of ltk\/accountId/);
+});
+
+test('every missing required field is reported at once', () => {
+  assert.equal(validateLightConfig({}, 0).length, 3);
 });

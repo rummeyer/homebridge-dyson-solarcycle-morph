@@ -2,20 +2,30 @@
 /**
  * One-time pairing helper.
  *
- * Logs in to the Dyson cloud, fetches the lamp's long-term key, and prints a
- * ready-to-paste Homebridge config block. After this the plugin never needs
- * network access again.
+ * Logs in to the Dyson cloud, fetches the lamp's long-term key, and stores it
+ * where the plugin will find it. After this the plugin never needs network
+ * access again.
  *
- * Usage: dyson-morph-pair [--serial ABC-EU-…] [--mac AA:BB:CC:DD:EE:FF] [--country DE] [--culture de-DE] [--email …] [--debug]
+ * Most people should use the plugin's settings page in the Homebridge UI
+ * instead; this exists for setups without it.
+ *
+ * Usage: dyson-morph-pair [--serial ABC-EU-…] [--country DE] [--culture de-DE]
+ *                        [--email …] [--storage …] [--debug]
  */
 import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
 
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { DysonCloud } from '../dyson/cloud.js';
+import { CredentialStore } from '../dyson/credentials.js';
+import { PLUGIN_NAME } from '../settings.js';
 
 interface Args {
   debug?: string;
   serial?: string;
+  storage?: string;
   mac?: string;
   country?: string;
   culture?: string;
@@ -126,7 +136,7 @@ async function main(prompter: Prompter): Promise<void> {
   const email = required(args.email ?? (await prompter.ask('Dyson account email: ')), 'email address');
   const password = required(await prompter.askSecret('Dyson account password: '), 'password');
   const serial = required(args.serial ?? (await prompter.ask('Lamp serial number: ')), 'serial number').toUpperCase();
-  const mac = required(args.mac ?? (await prompter.ask('Lamp BLE MAC address: ')), 'MAC address').toUpperCase();
+  const storagePath = args.storage ?? join(homedir(), '.homebridge');
 
   const cloud = new DysonCloud({ country, culture, debug: args.debug === 'true' });
 
@@ -141,15 +151,22 @@ async function main(prompter: Prompter): Promise<void> {
   console.log(`Fetching the long-term key for ${serial}…`);
   const ltk = await cloud.fetchLtk(serial, token);
 
-  console.log('\nDone. Add this to the platforms array in your Homebridge config.json:\n');
+  await new CredentialStore(storagePath, PLUGIN_NAME).set(serial, { ltk, accountId });
+  console.log(`Stored the key for ${serial} under ${storagePath}.`);
+
+  console.log('\nAdd this to the platforms array in your Homebridge config.json:\n');
   console.log(
     JSON.stringify(
-      { platform: 'DysonSolarcycleMorph', lights: [{ name: 'Dyson Morph', mac, serial, ltk, accountId, motionSensor: false }] },
+      { platform: 'DysonSolarcycleMorph', lights: [{ name: 'Dyson Morph', mac: '<the lamp BLE address>', serial }] },
       null,
       2,
     ),
   );
-  console.log('\nThe long-term key is a device credential — treat it like a password.');
+  console.log(
+    '\nThe key itself is deliberately not shown: it is a device credential, and it now\n' +
+      'lives outside config.json. Pass --storage if your Homebridge storage directory is\n' +
+      `not ${storagePath}.`,
+  );
 }
 
 const prompter = new Prompter(Boolean(stdin.isTTY));

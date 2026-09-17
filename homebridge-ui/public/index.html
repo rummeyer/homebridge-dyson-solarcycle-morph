@@ -1,0 +1,218 @@
+<!--
+  Settings page shown inside the Homebridge UI.
+
+  Runs in an iframe the UI provides; `homebridge.*` is injected by the host.
+  Styling is deliberately minimal — the host supplies Bootstrap and the active
+  light/dark theme, so anything defined here would fight it.
+-->
+<div id="morph-pairing">
+  <p class="mb-3">
+    The lamp ignores every command until it is paired. Pairing fetches its key from your
+    MyDyson account once; after that the plugin works entirely offline.
+    <strong>The lamp must already be registered in the MyDyson app.</strong>
+  </p>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">1. Find your lights</h5>
+      <p class="card-text text-muted small">
+        Scans for nearby Dyson lights and fills in the address and serial number below.
+        Takes about 15 seconds.
+      </p>
+      <button type="button" class="btn btn-secondary" id="scan">Scan for lights</button>
+      <div id="scan-result" class="mt-3"></div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">2. Authorise your MyDyson account</h5>
+      <div class="form-group">
+        <label for="email">MyDyson email</label>
+        <input type="email" class="form-control" id="email" autocomplete="username">
+      </div>
+      <div class="form-group">
+        <label for="password">MyDyson password</label>
+        <input type="password" class="form-control" id="password" autocomplete="current-password">
+      </div>
+      <div class="form-group">
+        <label for="country">Country</label>
+        <input type="text" class="form-control" id="country" maxlength="2" style="max-width:6rem"
+               placeholder="GB" autocapitalize="characters">
+        <small class="form-text text-muted">Two-letter code for the country your Dyson account belongs to.</small>
+      </div>
+
+      <button type="button" class="btn btn-primary" id="request-code">Request code by email</button>
+
+      <div id="code-step" class="mt-3" hidden>
+        <div class="form-group">
+          <label for="otp">Code from the Dyson email</label>
+          <input type="text" class="form-control" id="otp" inputmode="numeric" autocomplete="one-time-code"
+                 style="max-width:12rem">
+        </div>
+        <button type="button" class="btn btn-primary" id="pair">Pair lights</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">Paired lights</h5>
+      <div id="status">…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  'use strict';
+
+  const $ = (id) => document.getElementById(id);
+  const escape = (text) => String(text).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  /** Serials of every light currently in the config form. */
+  async function configuredSerials() {
+    const config = await homebridge.getPluginConfig();
+    return (config[0]?.lights ?? [])
+      .map((light) => (light?.serial ?? '').trim())
+      .filter(Boolean);
+  }
+
+  /** Show which lights are paired, with a way to undo it. */
+  async function refreshStatus() {
+    const serials = await configuredSerials();
+    if (serials.length === 0) {
+      $('status').innerHTML =
+        '<span class="text-muted">No lights configured yet. Add one below, then scan or enter its serial number.</span>';
+      return;
+    }
+    try {
+      const { paired } = await homebridge.request('/status', { serials });
+      $('status').innerHTML = serials.map((serial) => {
+        const entry = paired[serial];
+        if (!entry) {
+          return `<div class="mb-2"><code>${escape(serial)}</code>
+                  <span class="badge badge-warning ml-2">not paired</span></div>`;
+        }
+        const when = new Date(entry.created).toLocaleString();
+        return `<div class="mb-2"><code>${escape(serial)}</code>
+                <span class="badge badge-success ml-2">paired</span>
+                <span class="text-muted small ml-2">${escape(when)}</span>
+                <button type="button" class="btn btn-link btn-sm text-danger forget"
+                        data-serial="${escape(serial)}">Forget</button></div>`;
+      }).join('');
+
+      for (const button of document.querySelectorAll('.forget')) {
+        button.addEventListener('click', async () => {
+          const serial = button.dataset.serial;
+          if (!window.confirm(`Remove the stored key for ${serial}? You will have to pair it again.`)) {
+            return;
+          }
+          try {
+            const { message } = await homebridge.request('/forget', { serial });
+            homebridge.toast.success(message);
+            await refreshStatus();
+          } catch (err) {
+            homebridge.toast.error(err.message ?? String(err));
+          }
+        });
+      }
+    } catch (err) {
+      $('status').innerHTML = `<span class="text-danger">${escape(err.message ?? err)}</span>`;
+    }
+  }
+
+  /** Run `task` with the spinner up and the button disabled. */
+  async function busy(button, task) {
+    button.disabled = true;
+    homebridge.showSpinner();
+    try {
+      return await task();
+    } catch (err) {
+      homebridge.toast.error(err.message ?? String(err));
+      return undefined;
+    } finally {
+      homebridge.hideSpinner();
+      button.disabled = false;
+    }
+  }
+
+  $('scan').addEventListener('click', () => busy($('scan'), async () => {
+    const { found } = await homebridge.request('/discover');
+    if (!found.length) {
+      $('scan-result').innerHTML =
+        '<span class="text-muted">No Dyson lights found. Make sure the lamp is powered and within Bluetooth range of this machine.</span>';
+      return;
+    }
+    $('scan-result').innerHTML =
+      `<p class="mb-2">Found ${found.length} light${found.length === 1 ? '' : 's'}:</p>` +
+      found.map((d) => `<div class="mb-2"><code>${escape(d.serial)}</code>
+        <span class="text-muted small ml-2">${escape(d.mac)}</span>
+        <button type="button" class="btn btn-sm btn-outline-primary ml-2 use"
+                data-mac="${escape(d.mac)}" data-serial="${escape(d.serial)}">Add</button></div>`).join('');
+
+    for (const button of document.querySelectorAll('.use')) {
+      button.addEventListener('click', async () => {
+        const { mac, serial } = button.dataset;
+        const config = await homebridge.getPluginConfig();
+        const platform = config[0] ?? { platform: 'DysonSolarcycleMorph' };
+        platform.lights = platform.lights ?? [];
+        // Re-adding a light should correct its address, not duplicate it.
+        const existing = platform.lights.find((l) => (l.serial ?? '').trim().toUpperCase() === serial.toUpperCase());
+        if (existing) {
+          existing.mac = mac;
+        } else {
+          platform.lights.push({ name: `Dyson ${serial}`, mac, serial });
+        }
+        await homebridge.updatePluginConfig([platform]);
+        homebridge.toast.success(`${serial} added to the configuration below.`);
+        await refreshStatus();
+      });
+    }
+  }));
+
+  $('request-code').addEventListener('click', () => busy($('request-code'), async () => {
+    const { message } = await homebridge.request('/start-auth', {
+      email: $('email').value,
+      country: $('country').value,
+    });
+    homebridge.toast.success(message);
+    $('code-step').hidden = false;
+    $('otp').focus();
+  }));
+
+  $('pair').addEventListener('click', () => busy($('pair'), async () => {
+    const serials = await configuredSerials();
+    const response = await homebridge.request('/finish-auth', {
+      email: $('email').value,
+      password: $('password').value,
+      country: $('country').value,
+      otpCode: $('otp').value,
+      serials,
+    });
+    const failed = response.results.filter((r) => !r.paired);
+    if (failed.length === 0) {
+      homebridge.toast.success(response.message);
+      $('code-step').hidden = true;
+      $('password').value = '';
+      $('otp').value = '';
+    } else {
+      homebridge.toast.error(response.message);
+      for (const result of failed) {
+        homebridge.toast.error(`${result.serial}: ${result.message}`);
+      }
+    }
+    await refreshStatus();
+  }));
+
+  // Prefill the country from the browser, since it is usually right and the
+  // field is easy to overlook.
+  const region = new Intl.Locale(navigator.language).region;
+  if (region) {
+    $('country').value = region;
+  }
+
+  refreshStatus();
+})();
+</script>

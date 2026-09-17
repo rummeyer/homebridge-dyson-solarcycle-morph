@@ -2,7 +2,7 @@
   "pluginAlias": "DysonSolarcycleMorph",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph. Run `dyson-morph-pair` once to obtain the long-term key and account ID.",
+  "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph.\n\n**The lamp must be registered in the MyDyson app.** Its key is issued by Dyson against the account the lamp belongs to and cannot be read from the device itself.",
   "schema": {
     "type": "object",
     "properties": {
@@ -38,19 +38,6 @@
               "required": true,
               "description": "Printed on the lamp base and shown in the MyDyson app."
             },
-            "ltk": {
-              "title": "Long-term key",
-              "type": "string",
-              "required": true,
-              "pattern": "^[0-9a-fA-F]+$",
-              "description": "Hex string from `dyson-morph-pair`. Treat it like a password."
-            },
-            "accountId": {
-              "title": "Dyson account ID",
-              "type": "string",
-              "required": true,
-              "description": "Account UUID from `dyson-morph-pair`."
-            },
             "motionSensor": {
               "title": "Expose the motion sensor",
               "type": "boolean",
@@ -61,5 +48,8 @@
         }
       }
     }
-  }
+  },
+  "customUi": true,
+  "customUiPath": "./homebridge-ui",
+  "footerDisplay": "Keys are stored outside config.json, in the plugin's storage directory."
 }

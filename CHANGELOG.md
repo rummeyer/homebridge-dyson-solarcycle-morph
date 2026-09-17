@@ -12,15 +12,27 @@ First release. Verified end to end against a Solarcycle Morph desk light
 
 ### Added
 
+- A settings page in the Homebridge UI that scans for nearby lights, authorises
+  a MyDyson account and pairs them, replacing the need to run anything by hand.
+- Credentials are stored in the plugin's storage directory rather than in
+  `config.json`, so the file the UI displays holds nothing sensitive. Setting
+  `ltk` and `accountId` in the config still works and takes precedence.
+- Signal strength is logged on connect, with a warning below −80 dBm — the point
+  where BLE supervision timeouts make a link drop repeatedly.
+
 - HomeKit lightbulb with on/off, brightness and colour temperature (2700–6500 K).
 - Optional motion sensor from the lamp's built-in detector.
 - Offline LTK re-authentication, run on every connect. No network access after
   pairing.
-- `dyson-morph-pair`, a one-time CLI that logs in to the Dyson cloud and fetches
-  the lamp's long-term key.
+- `dyson-morph-pair`, the same flow from a terminal, for setups without the
+  Homebridge UI.
 - `tools/ble-probe.js`, a standalone GATT dump for inspecting a lamp without
   installing the plugin.
 - Reconnect with backoff, and a keepalive poll that keeps the BLE link up.
+
+### Requirements
+
+- Homebridge 2.x. The plugin is ESM, matching Homebridge 2's own module format.
 
 ### Notes on the protocol
 
