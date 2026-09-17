@@ -8,8 +8,14 @@
   confirm inline instead.
 -->
 <style>
+  /* Matches the sibling Dyson plugin's settings page, so the two feel alike. */
   .morph-hidden { display: none; }
-  .morph-msg { margin-top: 1rem; }
+  .morph-msg    { margin-top: .75rem; margin-bottom: 0; font-size: .85rem; }
+  .morph-status { display: flex; gap: .5rem; align-items: baseline; flex-wrap: wrap; }
+  .morph-ok     { color: var(--bs-success, #2e9e5b); font-weight: 600; }
+  .morph-hint   { font-size: .8rem; opacity: .7; }
+  .morph-link   { background: none; border: 0; padding: 0; font-size: .85rem;
+                  text-decoration: underline; cursor: pointer; color: inherit; opacity: .75; }
 </style>
 
 <div id="morph">
@@ -38,6 +44,10 @@
       </div>
 
       <div id="morph-auth">
+        <div id="morph-lamps-work" class="alert alert-info morph-hidden">
+          Your lights already have their keys and will work without this. Authorising again is only
+          needed to add a light or re-pair one.
+        </div>
         <button type="button" class="btn btn-primary" id="morph-request">Request code by email</button>
         <div id="morph-code" class="mt-3 morph-hidden">
           <div class="form-group">
@@ -49,13 +59,11 @@
         </div>
       </div>
 
-      <div id="morph-done" class="morph-hidden">
-        <p class="mb-2"><span class="badge badge-success">Authorised</span>
-          <span class="text-muted small ml-2" id="morph-done-when"></span></p>
-        <button type="button" class="btn btn-link btn-sm pl-0" id="morph-again">Authorise again</button>
-        <button type="button" class="btn btn-link btn-sm text-danger morph-hidden" id="morph-forget-password">
-          Remove password from config
-        </button>
+      <div id="morph-done" class="morph-status morph-hidden">
+        <span class="morph-ok">&check; Authorised</span>
+        <span id="morph-done-when" class="morph-hint"></span>
+        <button type="button" class="morph-link morph-hidden" id="morph-forget-password">Forget password</button>
+        <button type="button" class="morph-link" id="morph-again">Authorise again</button>
       </div>
 
       <div id="morph-message" class="alert morph-msg morph-hidden"></div>
@@ -139,6 +147,28 @@
   }
 
   /**
+   * Say so when the lights are already usable.
+   *
+   * A lamp key does not expire, so a paired light keeps working even with no
+   * account session stored — which is the normal state after pairing with an
+   * older version. Without this the page looks like nothing is set up.
+   */
+  async function refreshLampsWorkNotice() {
+    const serials = (await readConfig())[0].lights.map((l) => (l?.serial ?? '').trim()).filter(Boolean);
+    let anyPaired = false;
+    if (serials.length) {
+      try {
+        const { paired } = await homebridge.request('/pair-status', { serials });
+        anyPaired = serials.some((s) => paired[s]);
+      } catch {
+        anyPaired = false;
+      }
+    }
+    const authorising = !$('morph-auth').classList.contains('morph-hidden');
+    $('morph-lamps-work').classList.toggle('morph-hidden', !(anyPaired && authorising));
+  }
+
+  /**
    * Collapse the code request once the session works.
    *
    * It stays reachable behind "Authorise again" because a token can be revoked
@@ -153,6 +183,11 @@
     if (created) parts.push(`since ${new Date(created).toLocaleDateString()}`);
     if (typeof devices === 'number') parts.push(`${devices} device${devices === 1 ? '' : 's'} in the account`);
     $('morph-done-when').textContent = parts.join(' · ');
+    refreshPasswordButton();
+  }
+
+  /** The password is only worth offering to forget when there is one. */
+  function refreshPasswordButton() {
     $('morph-forget-password').classList.toggle('morph-hidden', !$('morph-password').value);
   }
 
@@ -176,6 +211,8 @@
     } catch {
       showAuthStep();
     }
+    refreshPasswordButton();
+    await refreshLampsWorkNotice();
   }
 
   /** List each configured light and whether it holds a key. */
@@ -336,11 +373,12 @@
     delete configs[0].dysonAccount.password;
     await homebridge.updatePluginConfig(configs);
     $('morph-password').value = '';
-    $('morph-forget-password').classList.add('morph-hidden');
+    refreshPasswordButton();
     show('Password cleared. Press Save to write that to config.json. Enter it again only if you need to authorise afresh.', 'success');
   })());
 
   for (const id of ['morph-email', 'morph-password', 'morph-country']) {
+    $(id).addEventListener('input', refreshPasswordButton);
     $(id).addEventListener('change', () => void storeAccount().then(refreshAuth));
   }
 
