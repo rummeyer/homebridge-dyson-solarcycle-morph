@@ -66,11 +66,20 @@ const STUCK_AFTER_ATTEMPTS = 8;
 /** How long to scan for a lamp BlueZ has never seen. */
 const DISCOVERY_TIMEOUT_MS = 30_000;
 
+/** Pause after starting a scan before the first connect attempt. */
+const DISCOVERY_SETTLE_MS = 3_000;
+
 /**
- * Pause between starting discovery and connecting. Measured, not guessed: a
- * connect issued straight after discovery starts is aborted every time.
+ * Connect attempts per reconnect cycle, and the gap between them.
+ *
+ * Measured over repeated runs: a single attempt succeeds roughly two times in
+ * three even under the best conditions, and no arrangement of scanning and
+ * waiting does better. Individual attempts are cheap, so several in quick
+ * succession are worth far more than a cleverer single one — four of them put
+ * a cycle above 98%.
  */
-const DISCOVERY_SETTLE_MS = 8_000;
+const CONNECT_ATTEMPTS = 4;
+const CONNECT_RETRY_MS = 1_500;
 
 /** The lamp can take a while to answer the first handshake message. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
@@ -432,32 +441,41 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Connect, with a scan running.
+   * Connect, with a scan running, retrying briskly.
    *
-   * Connecting without one is aborted by the controller every time
-   * (`le-connection-abort-by-local`), while the same attempt succeeds whenever
-   * a scan is active — observed repeatedly, including by watching the plugin
-   * connect the moment an unrelated `bluetoothctl scan` was started.
-   *
-   * A connect issued in the same breath as starting the scan is also aborted,
-   * so a freshly started scan settles first.
+   * Two things came out of measuring this. A scan has to be running and must
+   * stay running through the connect — stopping it first roughly halves the
+   * success rate. And no arrangement is reliable: the best managed two
+   * successes in three, so the answer is repetition rather than a cleverer
+   * sequence.
    */
   private async connectDevice(adapter: Adapter): Promise<Device> {
     if (!(await adapter.isDiscovering())) {
       await adapter.startDiscovery();
       this.discoveryIsOurs = true;
       this.log.debug(`Scanning for ${this.mac}`);
-      const device = await adapter.waitDevice(this.mac, DISCOVERY_TIMEOUT_MS);
-      await this.markTrusted(device);
       await sleep(DISCOVERY_SETTLE_MS);
-      await device.connect();
-      return device;
     }
 
     const device = await adapter.waitDevice(this.mac, DISCOVERY_TIMEOUT_MS);
     await this.markTrusted(device);
-    await device.connect();
-    return device;
+
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
+      try {
+        await device.connect();
+        if (attempt > 1) {
+          this.log.debug(`Connected to ${this.mac} on attempt ${attempt}`);
+        }
+        return device;
+      } catch (error) {
+        lastError = error;
+        if (attempt < CONNECT_ATTEMPTS) {
+          await sleep(CONNECT_RETRY_MS);
+        }
+      }
+    }
+    throw lastError;
   }
 
   /**
