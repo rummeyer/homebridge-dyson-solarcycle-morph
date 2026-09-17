@@ -100,7 +100,7 @@ const KELVIN_TOLERANCE = 120;
  * second. Sending each one queues writes faster than the lamp applies them, so
  * it visibly lags the slider. Only the value the user stops on matters.
  */
-const WRITE_DEBOUNCE_MS = 200;
+const WRITE_DEBOUNCE_MS = 400;
 
 export interface LampState {
   on: boolean;
@@ -289,6 +289,12 @@ export class DysonMorphLamp extends EventEmitter {
    * nothing, which is exactly the case that would leave HomeKit showing a state
    * the lamp is not in. So the value is read back, retried once if it did not
    * land, and whatever the lamp actually reports becomes the state we publish.
+   *
+   * Verification is skipped entirely when a newer value for the same
+   * characteristic is already waiting. Mid-drag the lamp has moved on by the
+   * time the read returns, so comparing against this target would report a
+   * mismatch that never happened — and retrying would write a stale value back
+   * over the newer one, dragging the slider backwards.
    */
   private async writeVerified<T>(
     uuid: string,
@@ -300,7 +306,13 @@ export class DysonMorphLamp extends EventEmitter {
   ): Promise<void> {
     for (let attempt = 1; attempt <= 2; attempt++) {
       await this.write(uuid, value);
+      if (this.writes.isPending(uuid)) {
+        return;
+      }
       await sleep(VERIFY_DELAY_MS);
+      if (this.writes.isPending(uuid)) {
+        return;
+      }
 
       const raw = await this.chars[uuid]?.readValue().catch((error: unknown) => {
         // Not being able to check is not a reason to fail the command; the

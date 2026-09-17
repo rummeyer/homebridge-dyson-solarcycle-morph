@@ -43,6 +43,16 @@ export class Debouncer {
     });
   }
 
+  /**
+   * Whether a task is waiting under this key.
+   *
+   * Lets a running task notice that its own result is already obsolete, so it
+   * can stop rather than act on a value the caller has moved past.
+   */
+  isPending(key: string): boolean {
+    return this.pending.has(key);
+  }
+
   /** Drop everything waiting, resolving the callers. Nothing is executed. */
   cancelAll(): void {
     for (const { supersede } of [...this.pending.values()]) {

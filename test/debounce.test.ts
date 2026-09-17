@@ -87,3 +87,36 @@ test('tasks run through the supplied queue, not directly', async () => {
   await d.schedule('key', async () => void order.push('task'));
   assert.deepEqual(order, ['queue', 'task']);
 });
+
+test('a key with a task waiting reports as pending', async () => {
+  const { run } = recorder();
+  const d = new Debouncer(30, run);
+
+  assert.equal(d.isPending('key'), false, 'nothing scheduled yet');
+  const call = d.schedule('key', async () => {});
+  assert.equal(d.isPending('key'), true, 'a task is waiting');
+  assert.equal(d.isPending('other'), false, 'keys are independent');
+
+  await call;
+  await tick(60);
+  assert.equal(d.isPending('key'), false, 'cleared once it has run');
+});
+
+test('a superseding schedule leaves the key pending', async () => {
+  const { run } = recorder();
+  const d = new Debouncer(30, run);
+  void d.schedule('key', async () => {});
+  void d.schedule('key', async () => {});
+  // The replacement must not look like "nothing waiting" to a running task.
+  assert.equal(d.isPending('key'), true);
+  await tick(60);
+});
+
+test('cancelAll clears pending', async () => {
+  const { run } = recorder();
+  const d = new Debouncer(50, run);
+  const call = d.schedule('key', async () => {});
+  d.cancelAll();
+  assert.equal(d.isPending('key'), false);
+  await call;
+});
