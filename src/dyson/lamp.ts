@@ -81,6 +81,18 @@ const WEAK_RSSI_DBM = -80;
 /** The lamp needs a moment to apply a mode change before the next write. */
 const MODE_SETTLE_MS = 200;
 
+/** How long to give the lamp to apply a command before checking it took. */
+const VERIFY_DELAY_MS = 400;
+
+/**
+ * Tolerances when checking a write landed.
+ *
+ * The lamp rounds what it stores, so an exact comparison would report a
+ * mismatch for a command that was in fact applied.
+ */
+const LUMEN_TOLERANCE = 25;
+const KELVIN_TOLERANCE = 120;
+
 /**
  * How long to wait for a slider to settle before writing.
  *
@@ -218,8 +230,15 @@ export class DysonMorphLamp extends EventEmitter {
 
   async setPower(on: boolean): Promise<void> {
     await this.enqueue(async () => {
-      await this.write(CHAR_POWER, Buffer.from([on ? 0x01 : 0x00]));
       this.patchState({ on });
+      await this.writeVerified(
+        CHAR_POWER,
+        Buffer.from([on ? 0x01 : 0x00]),
+        (value) => (value.length ? value[0] !== 0 : undefined),
+        on,
+        (actual, target) => actual === target,
+        (value) => this.patchState({ on: value }),
+      );
     });
   }
 
@@ -227,20 +246,87 @@ export class DysonMorphLamp extends EventEmitter {
   async setBrightness(percent: number): Promise<void> {
     const lumens = percentToLumens(percent);
     this.patchState({ brightness: lumensToPercent(lumens) });
-    await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
+    await this.writes.schedule(CHAR_BRIGHTNESS_LM, () =>
+      this.writeUint16(CHAR_BRIGHTNESS_LM, lumens, LUMEN_TOLERANCE, (actual) =>
+        this.patchState({ brightness: lumensToPercent(actual) }),
+      ),
+    );
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
     const clamped = Math.min(MAX_KELVIN, Math.max(MIN_KELVIN, Math.round(kelvin)));
     this.patchState({ kelvin: clamped });
-    await this.writes.schedule(CHAR_COLOR_TEMP, () => this.writeUint16(CHAR_COLOR_TEMP, clamped));
+    await this.writes.schedule(CHAR_COLOR_TEMP, () =>
+      this.writeUint16(CHAR_COLOR_TEMP, clamped, KELVIN_TOLERANCE, (actual) => this.patchState({ kelvin: actual })),
+    );
   }
 
-  private async writeUint16(uuid: string, value: number): Promise<void> {
+  private async writeUint16(
+    uuid: string,
+    value: number,
+    tolerance: number,
+    apply: (actual: number) => void,
+  ): Promise<void> {
     await this.ensureManualMode();
     const buffer = Buffer.alloc(2);
     buffer.writeUInt16LE(value);
-    await this.write(uuid, buffer);
+    await this.writeVerified(
+      uuid,
+      buffer,
+      (raw) => (raw.length >= 2 ? raw.readUInt16LE(0) : undefined),
+      value,
+      (actual, target) => Math.abs(actual - target) <= tolerance,
+      apply,
+    );
+  }
+
+  /**
+   * Write, then look at whether the lamp took it.
+   *
+   * Control writes are unacknowledged — the characteristics offer no `write`
+   * flag at all — so a command can be dropped with nothing to say so. The lamp
+   * notifies on change, but a lost write changes nothing and therefore notifies
+   * nothing, which is exactly the case that would leave HomeKit showing a state
+   * the lamp is not in. So the value is read back, retried once if it did not
+   * land, and whatever the lamp actually reports becomes the state we publish.
+   */
+  private async writeVerified<T>(
+    uuid: string,
+    value: Buffer,
+    decode: (raw: Buffer) => T | undefined,
+    target: T,
+    matches: (actual: T, target: T) => boolean,
+    apply: (actual: T) => void,
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      await this.write(uuid, value);
+      await sleep(VERIFY_DELAY_MS);
+
+      const raw = await this.chars[uuid]?.readValue().catch((error: unknown) => {
+        // Not being able to check is not a reason to fail the command; the
+        // write may well have landed. Notifications will correct us if not.
+        this.log.debug(`Could not verify ${uuid}: ${describe(error)}`);
+        return undefined;
+      });
+      const actual = raw ? decode(raw) : undefined;
+      if (actual === undefined) {
+        return;
+      }
+      if (matches(actual, target)) {
+        return;
+      }
+
+      if (attempt === 1) {
+        this.log.debug(`${uuid} did not take (wanted ${String(target)}, lamp reports ${String(actual)}); retrying`);
+      } else {
+        // Report what the lamp is actually doing rather than what was asked
+        // for, so HomeKit stops claiming something untrue.
+        this.log.warn(
+          `${this.mac} did not accept a command (wanted ${String(target)}, lamp reports ${String(actual)})`,
+        );
+        apply(actual);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- internals
