@@ -47,7 +47,7 @@ const WANTED_CHARACTERISTICS = new Set([
 const REQUIRED_CHARACTERISTICS = [CHAR_AUTH, CHAR_POWER];
 
 /** Delays between reconnect attempts; the last value repeats. */
-const RECONNECT_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000];
+const RECONNECT_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 /** How long to scan for a lamp BlueZ has never seen. */
 const DISCOVERY_TIMEOUT_MS = 30_000;
@@ -81,6 +81,14 @@ const WEAK_RSSI_DBM = -80;
 
 /** The lamp needs a moment to apply a mode change before the next write. */
 const MODE_SETTLE_MS = 200;
+
+/**
+ * How long a command issued while disconnected stays worth applying.
+ *
+ * Long enough to cover a reconnect, short enough that a request from an hour
+ * ago does not surprise anyone by taking effect when the link returns.
+ */
+const INTENT_TTL_MS = 120_000;
 
 /** How long to give the lamp to apply a command before checking it took. */
 const VERIFY_DELAY_MS = 400;
@@ -174,6 +182,17 @@ export class DysonMorphLamp extends EventEmitter {
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
 
+  /**
+   * What was asked for while the lamp was unreachable.
+   *
+   * Dropping a command because the link happened to be down is the one failure
+   * the user cannot work around: HomeKit shows the new state, the lamp never
+   * hears about it, and nothing retries. Held here and applied once the link is
+   * back.
+   */
+  private intent: Partial<LampState> = {};
+  private intentAt = 0;
+
   constructor(options: LampOptions) {
     super();
     this.mac = options.mac.toUpperCase();
@@ -234,10 +253,16 @@ export class DysonMorphLamp extends EventEmitter {
     // so anything still queued behind a slider drag is dropped rather than
     // made to run first: those values are about to be overtaken anyway, and
     // waiting for them is what made switching off take seconds.
+    this.patchState({ on });
+    if (this.deferWhileOffline({ on })) {
+      return;
+    }
+    const requestedAt = Date.now();
+    const queued = this.operations.depth;
     this.writes.cancelAll();
     this.operations.cancelQueued();
     await this.enqueue(async () => {
-      this.patchState({ on });
+      const waited = Date.now() - requestedAt;
       await this.writeVerified(
         CHAR_POWER,
         Buffer.from([on ? 0x01 : 0x00]),
@@ -246,13 +271,21 @@ export class DysonMorphLamp extends EventEmitter {
         (actual, target) => actual === target,
         (value) => this.patchState({ on: value }),
       );
+      this.log.info(
+        `Power ${on ? 'on' : 'off'} took ${Date.now() - requestedAt}ms ` +
+          `(${waited}ms waiting behind ${queued} queued, ${Date.now() - requestedAt - waited}ms on the lamp)`,
+      );
     });
   }
 
   /** @param percent HomeKit brightness, 0-100 %. */
   async setBrightness(percent: number): Promise<void> {
     const lumens = percentToLumens(percent);
+    this.log.debug(`Brightness ${percent}% requested (${this.operations.depth} queued)`);
     this.patchState({ brightness: lumensToPercent(lumens) });
+    if (this.deferWhileOffline({ brightness: lumensToPercent(lumens) })) {
+      return;
+    }
     await this.writes.schedule(CHAR_BRIGHTNESS_LM, () =>
       this.writeUint16(CHAR_BRIGHTNESS_LM, lumens, LUMEN_TOLERANCE, (actual) =>
         this.patchState({ brightness: lumensToPercent(actual) }),
@@ -263,6 +296,9 @@ export class DysonMorphLamp extends EventEmitter {
   async setColorTemperature(kelvin: number): Promise<void> {
     const clamped = Math.min(MAX_KELVIN, Math.max(MIN_KELVIN, Math.round(kelvin)));
     this.patchState({ kelvin: clamped });
+    if (this.deferWhileOffline({ kelvin: clamped })) {
+      return;
+    }
     await this.writes.schedule(CHAR_COLOR_TEMP, () =>
       this.writeUint16(CHAR_COLOR_TEMP, clamped, KELVIN_TOLERANCE, (actual) => this.patchState({ kelvin: actual })),
     );
@@ -312,7 +348,9 @@ export class DysonMorphLamp extends EventEmitter {
     apply: (actual: T) => void,
   ): Promise<void> {
     for (let attempt = 1; attempt <= 2; attempt++) {
+      const started = Date.now();
       await this.write(uuid, value);
+      this.log.debug(`Wrote ${uuid} in ${Date.now() - started}ms (attempt ${attempt})`);
       if (this.writes.isPending(uuid)) {
         return;
       }
@@ -345,6 +383,54 @@ export class DysonMorphLamp extends EventEmitter {
         );
         apply(actual);
       }
+    }
+  }
+
+  /**
+   * Hold a command that cannot be sent right now.
+   *
+   * @returns true when the caller should stop, because there is no link and the
+   * command has been remembered instead.
+   */
+  private deferWhileOffline(patch: Partial<LampState>): boolean {
+    if (this.connected) {
+      return false;
+    }
+    this.intent = { ...this.intent, ...patch };
+    this.intentAt = Date.now();
+    this.log.debug(`Not connected; holding ${JSON.stringify(patch)} until the link is back`);
+    return true;
+  }
+
+  /**
+   * Apply what was asked for while the lamp was unreachable.
+   *
+   * Runs after the state has been read back, so only genuine differences are
+   * written — the lamp may already be where the user wanted it.
+   */
+  private async applyIntent(): Promise<void> {
+    const intent = this.intent;
+    const age = Date.now() - this.intentAt;
+    this.intent = {};
+    if (Object.keys(intent).length === 0) {
+      return;
+    }
+    if (age > INTENT_TTL_MS) {
+      this.log.debug(`Discarding a ${Math.round(age / 1000)}s old command rather than applying it late`);
+      return;
+    }
+
+    this.log.info(`Applying ${JSON.stringify(intent)}, requested while the lamp was unreachable`);
+    if (intent.kelvin !== undefined && intent.kelvin !== this.state.kelvin) {
+      await this.setColorTemperature(intent.kelvin);
+    }
+    if (intent.brightness !== undefined && intent.brightness !== this.state.brightness) {
+      await this.setBrightness(intent.brightness);
+    }
+    // Power last: the lamp should reach its final brightness before coming on,
+    // and switching off makes the other two pointless anyway.
+    if (intent.on !== undefined && intent.on !== this.state.on) {
+      await this.setPower(intent.on);
     }
   }
 
@@ -403,6 +489,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
     await this.reportSignalStrength();
     this.emit('connected');
+    await this.applyIntent();
   }
 
   /**
