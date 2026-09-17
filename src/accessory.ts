@@ -1,3 +1,4 @@
+import { describeError } from './errors.js';
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 
 import type { ResolvedLightConfig } from './config.js';
@@ -92,7 +93,7 @@ export class MorphAccessory {
     try {
       await this.lamp.start();
     } catch (error) {
-      this.platform.log.error(`Could not start BLE session for ${this.config.name}: ${describe(error)}`);
+      this.platform.log.error(`Could not start BLE session for ${this.config.name}: ${describeError(error)}`);
     }
   }
 
@@ -138,7 +139,7 @@ export class MorphAccessory {
     try {
       await apply();
     } catch (error) {
-      this.platform.log.warn(`Setting ${what} on ${this.config.name} failed: ${describe(error)}`);
+      this.platform.log.warn(`Setting ${what} on ${this.config.name} failed: ${describeError(error)}`);
       throw new this.platform.api.hap.HapStatusError(
         this.platform.api.hap.HAPStatus.SERVICE_COMMUNICATION_FAILURE,
       );
@@ -146,6 +147,3 @@ export class MorphAccessory {
   }
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

@@ -10,6 +10,7 @@ import { HomebridgePluginUiServer, RequestError } from '@homebridge/plugin-ui-ut
 import { createBluetooth } from 'node-ble';
 
 import { DysonCloud, isBluetoothLight } from '../dist/dyson/cloud.js';
+import { describeError } from '../dist/errors.js';
 import { CredentialStore } from '../dist/dyson/credentials.js';
 import { PLUGIN_NAME } from '../dist/settings.js';
 
@@ -292,23 +293,5 @@ function cultureFor(country) {
   return `${languages[country] ?? 'en'}-${country}`;
 }
 
-/**
- * Describe an error usefully.
- *
- * A bare message hides the HTTP status when Dyson refused, which is the single
- * most useful thing to know when this flow fails.
- */
-function describeError(err) {
-  if (!(err instanceof Error)) {
-    return String(err);
-  }
-  const parts = [err.message];
-  let cause = err.cause;
-  while (cause instanceof Error && parts.length < 3) {
-    parts.push(`caused by ${cause.message}`);
-    cause = cause.cause;
-  }
-  return parts.join(' — ');
-}
 
 new MorphUiServer();

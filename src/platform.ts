@@ -1,3 +1,4 @@
+import { describeError } from './errors.js';
 import type {
   API,
   DynamicPlatformPlugin,
@@ -101,7 +102,7 @@ export class MorphPlatform implements DynamicPlatformPlugin {
         return { ...light, ltk: stored.ltk, accountId: stored.accountId };
       }
     } catch (error) {
-      this.log.error(`Could not read stored credentials for ${light.name}: ${describe(error)}`);
+      this.log.error(`Could not read stored credentials for ${light.name}: ${describeError(error)}`);
       return undefined;
     }
     this.log.error(
@@ -125,6 +126,3 @@ export class MorphPlatform implements DynamicPlatformPlugin {
   }
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}

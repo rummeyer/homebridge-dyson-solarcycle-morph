@@ -6,6 +6,7 @@
  * is serialised through one queue: BlueZ will happily return `InProgress` or
  * drop replies if two D-Bus calls overlap on the same characteristic.
  */
+import { describeError } from '../errors.js';
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 
@@ -204,7 +205,7 @@ export class DysonMorphLamp extends EventEmitter {
     // down with it. Treat it as a lost link and let the backoff handle it.
     const bus = (this.bluetooth.bluetooth as unknown as { dbus?: EventEmitter }).dbus;
     bus?.on('error', (error: unknown) => {
-      this.log.error(`D-Bus error talking to BlueZ: ${describe(error)}`);
+      this.log.error(`D-Bus error talking to BlueZ: ${describeError(error)}`);
       this.handleDisconnect();
     });
 
@@ -222,7 +223,7 @@ export class DysonMorphLamp extends EventEmitter {
     try {
       this.bluetooth?.destroy();
     } catch (error) {
-      this.log.debug(`Releasing the D-Bus connection failed: ${describe(error)}`);
+      this.log.debug(`Releasing the D-Bus connection failed: ${describeError(error)}`);
     }
     this.bluetooth = undefined;
     this.adapter = undefined;
@@ -299,7 +300,7 @@ export class DysonMorphLamp extends EventEmitter {
   private scheduleReconcile(): void {
     void this.reconciles
       .schedule('reconcile', () => this.reconcile())
-      .catch((error: unknown) => this.log.debug(`Reconcile failed: ${describe(error)}`));
+      .catch((error: unknown) => this.log.debug(`Reconcile failed: ${describeError(error)}`));
   }
 
   /**
@@ -357,7 +358,7 @@ export class DysonMorphLamp extends EventEmitter {
         const delay = RECONNECT_BACKOFF_MS[Math.min(this.reconnectAttempt, RECONNECT_BACKOFF_MS.length - 1)]!;
         this.reconnectAttempt++;
         this.log.warn(
-          `Connection to ${this.mac} failed (attempt ${this.reconnectAttempt}): ${describe(error)}. Retrying in ${delay / 1000}s.`,
+          `Connection to ${this.mac} failed (attempt ${this.reconnectAttempt}): ${describeError(error)}. Retrying in ${delay / 1000}s.`,
         );
         await this.teardown();
         await sleep(delay);
@@ -385,7 +386,7 @@ export class DysonMorphLamp extends EventEmitter {
     if (motion) {
       motion.on('valuechanged', (buffer) => this.emit('motion', buffer.some((b) => b !== 0)));
       await motion.startNotifications().catch((error) => {
-        this.log.debug(`Motion notifications unavailable: ${describe(error)}`);
+        this.log.debug(`Motion notifications unavailable: ${describeError(error)}`);
       });
     }
 
@@ -420,7 +421,7 @@ export class DysonMorphLamp extends EventEmitter {
         await cached.connect();
         return cached;
       } catch (error) {
-        this.log.debug(`Cached record for ${this.mac} did not connect (${describe(error)}); scanning instead`);
+        this.log.debug(`Cached record for ${this.mac} did not connect (${describeError(error)}); scanning instead`);
       }
     }
 
@@ -451,7 +452,7 @@ export class DysonMorphLamp extends EventEmitter {
     } finally {
       if (startedDiscovery) {
         await adapter.stopDiscovery().catch((error) => {
-          this.log.debug(`Could not stop discovery: ${describe(error)}`);
+          this.log.debug(`Could not stop discovery: ${describeError(error)}`);
         });
       }
     }
@@ -479,7 +480,7 @@ export class DysonMorphLamp extends EventEmitter {
       await helper.set('Trusted', new Variant('b', true));
       this.log.debug(`Marked ${this.mac} trusted so BlueZ keeps its record`);
     } catch (error) {
-      this.log.debug(`Could not mark ${this.mac} trusted: ${describe(error)}`);
+      this.log.debug(`Could not mark ${this.mac} trusted: ${describeError(error)}`);
     }
   }
 
@@ -612,7 +613,7 @@ export class DysonMorphLamp extends EventEmitter {
       try {
         return await this.chars[uuid]?.readValue();
       } catch (error) {
-        failures.push(`${label}: ${describe(error)}`);
+        failures.push(`${label}: ${describeError(error)}`);
         return undefined;
       }
     };
@@ -705,7 +706,7 @@ export class DysonMorphLamp extends EventEmitter {
         }
       });
       await characteristic.startNotifications().catch((error) => {
-        this.log.debug(`No notifications for ${uuid}: ${describe(error)}`);
+        this.log.debug(`No notifications for ${uuid}: ${describeError(error)}`);
       });
     }
   }
@@ -791,6 +792,3 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
