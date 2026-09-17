@@ -26,9 +26,11 @@
     "solarcycle",
     "lightcycle",
     "morph",
+    "cd06",
     "bluetooth",
     "ble",
-    "light"
+    "light",
+    "homekit"
   ],
   "scripts": {
     "build": "tsc && chmod +x dist/cli/pair.js",
@@ -47,8 +49,13 @@
   },
   "files": [
     "dist",
+    "tools",
+    "docs",
     "config.schema.json",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
-  ]
+  ],
+  "homepage": "https://github.com/rummeyer/homebridge-dyson-solarcycle-morph#readme",
+  "funding": "https://github.com/sponsors/rummeyer"
 }
