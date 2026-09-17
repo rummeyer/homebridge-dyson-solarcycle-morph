@@ -50,8 +50,18 @@ const WANTED_CHARACTERISTICS = new Set([
 /** Without these there is no point continuing. */
 const REQUIRED_CHARACTERISTICS = [CHAR_AUTH, CHAR_POWER];
 
-/** Delays between reconnect attempts; the last value repeats. */
-const RECONNECT_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
+/**
+ * Delays between reconnect attempts; the last value repeats.
+ *
+ * The long tail is deliberate. The lamp can reach a state where it advertises
+ * normally but refuses every connection, and only losing power clears it.
+ * Retrying every minute indefinitely will not fix that and gives it no quiet,
+ * so attempts thin out instead of hammering.
+ */
+const RECONNECT_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 120_000, 300_000];
+
+/** Consecutive failures after which the log suggests what actually helps. */
+const STUCK_AFTER_ATTEMPTS = 8;
 
 /** How long to scan for a lamp BlueZ has never seen. */
 const DISCOVERY_TIMEOUT_MS = 30_000;
@@ -165,6 +175,9 @@ export class DysonMorphLamp extends EventEmitter {
 
   /** Whether the running scan is one we started and must clean up. */
   private discoveryIsOurs = false;
+
+  /** So the "try power-cycling" hint is given once, not on every attempt. */
+  private hintedStuck = false;
 
   private running = false;
   private connected = false;
@@ -353,6 +366,7 @@ export class DysonMorphLamp extends EventEmitter {
       try {
         await this.connectOnce();
         this.reconnectAttempt = 0;
+        this.hintedStuck = false;
         return;
       } catch (error) {
         if (!this.running) {
@@ -363,6 +377,14 @@ export class DysonMorphLamp extends EventEmitter {
         this.log.warn(
           `Connection to ${this.mac} failed (attempt ${this.reconnectAttempt}): ${describeError(error)}. Retrying in ${delay / 1000}s.`,
         );
+        if (this.reconnectAttempt >= STUCK_AFTER_ATTEMPTS && !this.hintedStuck) {
+          this.hintedStuck = true;
+          this.log.warn(
+            `${this.mac} keeps refusing connections while still advertising. The lamp's Bluetooth ` +
+              'stack gets stuck like this occasionally; disconnecting it from power for ten seconds ' +
+              'clears it. Retries continue in the meantime, more slowly.',
+          );
+        }
         await this.teardown();
         await sleep(delay);
       }

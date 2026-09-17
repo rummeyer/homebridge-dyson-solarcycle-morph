@@ -167,6 +167,14 @@ sudo bluetoothctl info AA:BB:CC:DD:EE:FF | grep RSSI
 −60 dBm is comfortable, −75 is workable, −85 will not hold. Move the lamp or the
 Homebridge host closer to each other, or put a Bluetooth adapter nearer the lamp.
 
+**It keeps failing with `le-connection-abort-by-local` and never connects.**
+The lamp's Bluetooth stack can reach a state where it advertises normally — a
+scan finds it, at a good signal strength — but refuses every connection.
+**Disconnecting the lamp from power for ten seconds clears it**, reliably, and
+nothing on the Homebridge side does. The plugin keeps retrying and thins the
+attempts out to five minutes apart, so it will pick the lamp up again by itself
+once you have done that.
+
 **Everything reports `Operation Not Authorized`.** The handshake did not
 complete. Look for `Handshake with … complete` in the log.
 

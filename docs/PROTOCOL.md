@@ -59,6 +59,15 @@ returns `le-connection-abort-by-local` for the first two or three attempts
 before one succeeds, so the client retries with backoff rather than treating it
 as fatal.
 
+Separately, the lamp can reach a state where it keeps advertising at full signal
+strength but refuses every connection, indefinitely — over a hundred attempts in
+one observed stretch. **Removing its power for ten seconds clears it**, twice
+reproduced. Nothing on the client side was found to help: connecting from the
+cached record, rediscovering it, scanning during the connect and waiting for a
+fresh advertisement were each tried and each failed while it was in that state.
+The client therefore thins its retries out rather than hammering, and says in
+the log what actually works.
+
 Before writing brightness or colour temperature, write
 `13 20 01 00 00` to `2dd10021-…` to leave daylight mode, then wait ~200 ms.
 There is no way to read the current mode back, so the plugin re-asserts it on a
