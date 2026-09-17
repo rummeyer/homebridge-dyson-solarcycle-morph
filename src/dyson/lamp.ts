@@ -9,6 +9,7 @@
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 
+import { Variant } from 'dbus-next';
 import { createBluetooth } from 'node-ble';
 import type { Adapter, Device, GattCharacteristic, GattServer } from 'node-ble';
 
@@ -492,8 +493,7 @@ export class DysonMorphLamp extends EventEmitter {
     if (!adapter) {
       throw new Error('Bluetooth adapter is not available');
     }
-    this.device = await this.acquireDevice(adapter);
-    await this.device.connect();
+    this.device = await this.connectDevice(adapter);
     this.device.on('disconnect', () => this.handleDisconnect());
 
     await this.discoverCharacteristics(await this.device.gatt());
@@ -523,25 +523,42 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Get a device object to connect to, scanning only if BlueZ has never seen
-   * this lamp.
+   * Connect, preferring the record BlueZ already holds.
    *
-   * Connecting to an address BlueZ already knows needs no discovery at all and
-   * is by far the fastest path. Scanning is the fallback, and it has to settle
-   * first: a connect issued immediately after discovery starts is aborted by
-   * the controller, which BlueZ reports as `le-connection-abort-by-local` — a
-   * message that reads like a local fault rather than a timing problem.
-   *
-   * Discovery is stopped again before connecting. Leaving it running makes the
-   * radio time-slice between scan windows and connection events, which starves
-   * the link until it hits its supervision timeout.
+   * Connecting to a known address needs no discovery at all and is by far the
+   * fastest path. But BlueZ keeps listing a device for a while after it stops
+   * hearing from it, and connecting to such a stale record is refused — so a
+   * failure here falls straight through to a scan rather than giving up and
+   * waiting out the backoff on a record already known to be suspect.
    */
-  private async acquireDevice(adapter: Adapter): Promise<Device> {
+  private async connectDevice(adapter: Adapter): Promise<Device> {
     if ((await adapter.devices()).includes(this.mac)) {
-      return adapter.getDevice(this.mac);
+      const cached = await adapter.getDevice(this.mac);
+      await this.markTrusted(cached);
+      try {
+        await cached.connect();
+        return cached;
+      } catch (error) {
+        this.log.debug(`Cached record for ${this.mac} did not connect (${describe(error)}); scanning instead`);
+      }
     }
 
-    this.log.debug(`${this.mac} is unknown to BlueZ; scanning for it`);
+    const discovered = await this.discoverDevice(adapter);
+    await this.markTrusted(discovered);
+    await discovered.connect();
+    return discovered;
+  }
+
+  /**
+   * Find the lamp by scanning.
+   *
+   * A connect issued immediately after discovery starts is aborted by the
+   * controller, so this settles first. Discovery is stopped again before
+   * connecting: leaving it running makes the radio time-slice between scan
+   * windows and connection events, which starves the link.
+   */
+  private async discoverDevice(adapter: Adapter): Promise<Device> {
+    this.log.debug(`Scanning for ${this.mac}`);
     const startedDiscovery = !(await adapter.isDiscovering());
     if (startedDiscovery) {
       await adapter.startDiscovery();
@@ -556,6 +573,32 @@ export class DysonMorphLamp extends EventEmitter {
           this.log.debug(`Could not stop discovery: ${describe(error)}`);
         });
       }
+    }
+  }
+
+  /**
+   * Ask BlueZ to hold on to this device.
+   *
+   * An untrusted, unbonded device is dropped from the cache once it is neither
+   * connected nor being discovered, and the address then stops resolving at all
+   * — `bluetoothctl` reports it as "not available". Trusting it keeps the
+   * record, so a reconnect does not have to rediscover the lamp first.
+   */
+  private async markTrusted(device: Device): Promise<void> {
+    const helper = (device as unknown as {
+      helper?: { prop(name: string): Promise<unknown>; set(name: string, value: unknown): Promise<void> };
+    }).helper;
+    if (!helper) {
+      return;
+    }
+    try {
+      if (await helper.prop('Trusted')) {
+        return;
+      }
+      await helper.set('Trusted', new Variant('b', true));
+      this.log.debug(`Marked ${this.mac} trusted so BlueZ keeps its record`);
+    } catch (error) {
+      this.log.debug(`Could not mark ${this.mac} trusted: ${describe(error)}`);
     }
   }
 
