@@ -16,6 +16,9 @@
   .morph-hint   { font-size: .8rem; opacity: .7; }
   .morph-link   { background: none; border: 0; padding: 0; font-size: .85rem;
                   text-decoration: underline; cursor: pointer; color: inherit; opacity: .75; }
+  .morph-row       { display: flex; gap: .5rem; align-items: flex-start; }
+  .morph-row input { flex: 1 1 auto; min-width: 0; }
+  .morph-row .btn  { flex: 0 0 auto; white-space: nowrap; }
 </style>
 
 <div id="morph">
@@ -44,18 +47,22 @@
       </div>
 
       <div id="morph-auth">
+        <div id="morph-needs-lights" class="alert alert-warning morph-hidden">
+          Add a light below first — pairing fetches a key for each one, so there has to be
+          something to fetch it for.
+        </div>
         <div id="morph-lamps-work" class="alert alert-info morph-hidden">
           Your lights already have their keys and will work without this. Authorising again is only
           needed to add a light or re-pair one.
         </div>
-        <button type="button" class="btn btn-primary" id="morph-request">Request code by email</button>
-        <div id="morph-code" class="mt-3 morph-hidden">
-          <div class="form-group">
-            <label for="morph-otp">Code from the Dyson email</label>
-            <input type="text" class="form-control" id="morph-otp" inputmode="numeric"
-                   autocomplete="one-time-code" style="max-width:12rem">
+        <div class="form-group mb-0">
+          <label for="morph-otp">Auth code</label>
+          <div class="morph-row">
+            <input type="text" class="form-control" id="morph-otp"
+                   autocomplete="one-time-code" placeholder="from the Dyson email">
+            <button type="button" class="btn btn-secondary" id="morph-request">Request code</button>
+            <button type="button" class="btn btn-primary" id="morph-verify">Submit</button>
           </div>
-          <button type="button" class="btn btn-primary" id="morph-verify">Authorise</button>
         </div>
       </div>
 
@@ -176,7 +183,6 @@
    */
   function showAuthorised(created, devices) {
     $('morph-auth').classList.add('morph-hidden');
-    $('morph-code').classList.add('morph-hidden');
     $('morph-done').classList.remove('morph-hidden');
     $('morph-find').disabled = false;
     const parts = [];
@@ -296,7 +302,6 @@
     }
     const { message } = await homebridge.request('/start-auth', { account: stored });
     show(message, 'success');
-    $('morph-code').classList.remove('morph-hidden');
     $('morph-otp').focus();
   }));
 
