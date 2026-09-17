@@ -17,6 +17,7 @@ import { buildReauthPayloadA, buildReauthPayloadC, deriveAesKey, parseReauthPayl
 import { Debouncer } from './debounce.js';
 import { OperationQueue } from './queue.js';
 import { planReconciliation } from './reconcile.js';
+import { SettleWindow } from './settle.js';
 import {
   CHAR_AUTH,
   CHAR_BRIGHTNESS_LM,
@@ -96,6 +97,15 @@ const MODE_SETTLE_MS = 200;
  */
 const RECONCILE_DELAY_MS = 900;
 
+/**
+ * How long to disregard the lamp's own reports about a value just commanded.
+ *
+ * The lamp ramps rather than jumping, notifying each step on the way. Long
+ * enough to cover that climb, short enough that a change made at the lamp
+ * itself shows up promptly.
+ */
+const SETTLE_MS = 3_000;
+
 
 /**
  * How long to wait for a slider to settle before writing.
@@ -169,6 +179,7 @@ export class DysonMorphLamp extends EventEmitter {
 
   private readonly writes = new Debouncer(WRITE_DEBOUNCE_MS, (task, key) => this.enqueue(task, key));
   private readonly reconciles = new Debouncer(RECONCILE_DELAY_MS, (task, key) => this.enqueue(task, key));
+  private readonly settling = new SettleWindow(SETTLE_MS);
 
   private running = false;
   private connected = false;
@@ -247,6 +258,7 @@ export class DysonMorphLamp extends EventEmitter {
     // waiting for them is what made switching off take seconds.
     this.requireConnection();
     this.desired = { ...this.desired, on };
+    this.settling.hold('on');
     this.patchState({ on });
     const requestedAt = Date.now();
     const queued = this.operations.depth;
@@ -271,6 +283,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.log.debug(`Brightness ${percent}% requested (${this.operations.depth} queued)`);
     this.requireConnection();
     this.desired = { ...this.desired, brightness: lumensToPercent(lumens) };
+    this.settling.hold('brightness');
     this.patchState({ brightness: lumensToPercent(lumens) });
     // Not reconciled: the lamp adjusts brightness to track daylight, so a value
     // that differs from what was asked for is the lamp working, not a command
@@ -282,6 +295,7 @@ export class DysonMorphLamp extends EventEmitter {
     const clamped = Math.min(MAX_KELVIN, Math.max(MIN_KELVIN, Math.round(kelvin)));
     this.requireConnection();
     this.desired = { ...this.desired, kelvin: clamped };
+    this.settling.hold('kelvin');
     this.patchState({ kelvin: clamped });
     // Not reconciled: a colour temperature that lands slightly off is invisible,
     // and checking it would cost a read on a link that is not always there.
@@ -333,7 +347,7 @@ export class DysonMorphLamp extends EventEmitter {
     const { corrections, missed } = planReconciliation(this.desired, actual);
 
     if (corrections.length === 0) {
-      this.patchState(actual);
+      this.publishFromLamp(actual);
       return;
     }
 
@@ -348,7 +362,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.log.info(`${this.mac} did not apply ${missed.join(', ')} — resent`);
     // Publish what the lamp reports rather than what was asked for, so HomeKit
     // stops claiming something untrue if the resend does not land either.
-    this.patchState(await this.readState());
+    this.publishFromLamp(await this.readState());
   }
 
   // ---------------------------------------------------------------- internals
@@ -400,6 +414,7 @@ export class DysonMorphLamp extends EventEmitter {
 
     this.connected = true;
     this.manualModeSetAt = 0;
+    this.settling.clear();
     await this.refreshState();
     // The lamp is the authority on where it is. Anything asked for before the
     // link dropped is history, and aiming at it would have reconciliation
@@ -712,7 +727,7 @@ export class DysonMorphLamp extends EventEmitter {
       characteristic.on('valuechanged', (value) => {
         const patch = decode(value);
         if (patch) {
-          this.patchState(patch);
+          this.publishFromLamp(patch);
         }
       });
       await characteristic.startNotifications().catch((error) => {
@@ -768,6 +783,16 @@ export class DysonMorphLamp extends EventEmitter {
    */
   private enqueue<T>(task: () => Promise<T>, key?: string): Promise<T | undefined> {
     return this.operations.run(task, key);
+  }
+
+  /**
+   * Publish what the lamp reports, minus the echo of our own commands.
+   *
+   * A value the user just set must stay where they put it; the steps the lamp
+   * takes on its way there are not news, they are the command happening.
+   */
+  private publishFromLamp(patch: Partial<LampState>): void {
+    this.patchState(this.settling.filter(patch));
   }
 
   private patchState(patch: Partial<LampState>): void {
