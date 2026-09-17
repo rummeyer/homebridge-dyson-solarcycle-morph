@@ -48,9 +48,6 @@ const REQUIRED_CHARACTERISTICS = [CHAR_AUTH, CHAR_POWER];
 /** Delays between reconnect attempts; the last value repeats. */
 const RECONNECT_BACKOFF_MS = [5_000, 15_000, 30_000, 60_000];
 
-/** How often to poll the lamp so BlueZ keeps the link up. */
-const KEEPALIVE_INTERVAL_MS = 20_000;
-
 /** How long to scan for a lamp BlueZ has never seen. */
 const DISCOVERY_TIMEOUT_MS = 30_000;
 
@@ -160,7 +157,6 @@ export class DysonMorphLamp extends EventEmitter {
   private connected = false;
   private reconnectAttempt = 0;
   private reconnectTimer?: NodeJS.Timeout;
-  private keepaliveTimer?: NodeJS.Timeout;
   private manualModeSetAt = 0;
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
@@ -210,7 +206,6 @@ export class DysonMorphLamp extends EventEmitter {
   async stop(): Promise<void> {
     this.running = false;
     clearTimeout(this.reconnectTimer);
-    clearInterval(this.keepaliveTimer);
     await this.teardown();
     try {
       this.bluetooth?.destroy();
@@ -299,7 +294,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.connected = true;
     this.manualModeSetAt = 0;
     await this.refreshState();
-    this.keepaliveTimer = setInterval(() => void this.keepalive(), KEEPALIVE_INTERVAL_MS);
+    await this.subscribeToState();
     this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
     await this.reportSignalStrength();
     this.emit('connected');
@@ -517,15 +512,36 @@ export class DysonMorphLamp extends EventEmitter {
     }
   }
 
-  private async keepalive(): Promise<void> {
-    if (!this.connected) {
-      return;
-    }
-    try {
-      await this.enqueue(() => this.refreshState());
-    } catch (error) {
-      this.log.debug(`Keepalive failed: ${describe(error)}`);
-      this.handleDisconnect();
+  /**
+   * Follow the lamp's own state changes instead of polling for them.
+   *
+   * There is no need to poll to hold the link open — a BLE connection is
+   * maintained by the link layer, not by ATT traffic — and polling actively
+   * hurt: a periodic read would eventually come back `ATT error 0x0e` and take
+   * the connection down with it. Notifications also pick up changes made at the
+   * lamp itself, which polling only caught on its next tick.
+   */
+  private async subscribeToState(): Promise<void> {
+    const sources: [string, (value: Buffer) => Partial<LampState> | undefined][] = [
+      [CHAR_POWER, (value) => (value.length ? { on: value[0] !== 0 } : undefined)],
+      [CHAR_BRIGHTNESS_LM, (value) => (value.length >= 2 ? { brightness: lumensToPercent(value.readUInt16LE(0)) } : undefined)],
+      [CHAR_COLOR_TEMP, (value) => (value.length >= 2 ? { kelvin: value.readUInt16LE(0) } : undefined)],
+    ];
+
+    for (const [uuid, decode] of sources) {
+      const characteristic = this.chars[uuid];
+      if (!characteristic) {
+        continue;
+      }
+      characteristic.on('valuechanged', (value) => {
+        const patch = decode(value);
+        if (patch) {
+          this.patchState(patch);
+        }
+      });
+      await characteristic.startNotifications().catch((error) => {
+        this.log.debug(`No notifications for ${uuid}: ${describe(error)}`);
+      });
     }
   }
 
@@ -534,7 +550,6 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
     this.connected = false;
-    clearInterval(this.keepaliveTimer);
     this.log.warn(`Lost connection to ${this.mac} — reconnecting`);
     this.emit('disconnected');
     if (this.running) {
@@ -548,7 +563,6 @@ export class DysonMorphLamp extends EventEmitter {
     this.assembler.reset();
     this.waiters.clear();
     this.writeTypes = {};
-    clearInterval(this.keepaliveTimer);
     for (const characteristic of Object.values(this.chars)) {
       characteristic?.removeAllListeners('valuechanged');
     }
