@@ -100,22 +100,40 @@ async function readAllLines(): Promise<string[]> {
   return Buffer.concat(chunks).toString('utf8').split('\n');
 }
 
+/** Reject empty answers early rather than sending them to Dyson. */
+function required(value: string, what: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(
+      `No ${what} entered.\n\n` +
+        'This tool needs a terminal it can read from. If you started it through an\n' +
+        'editor, agent or CI shell, the prompts appear but your typing never reaches\n' +
+        'it. Run it directly in a terminal instead.',
+    );
+  }
+  return trimmed;
+}
+
 async function main(prompter: Prompter): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
+  if (!stdin.isTTY) {
+    console.error('Note: stdin is not a terminal, so answers are being read from piped input.\n');
+  }
+
   const country = args.country ?? ((await prompter.ask('Country code [DE]: ')).trim() || 'DE');
   const culture = args.culture ?? `${country.toLowerCase()}-${country.toUpperCase()}`;
-  const email = args.email ?? (await prompter.ask('Dyson account email: ')).trim();
-  const password = await prompter.askSecret('Dyson account password: ');
-  const serial = (args.serial ?? (await prompter.ask('Lamp serial number: '))).trim().toUpperCase();
-  const mac = (args.mac ?? (await prompter.ask('Lamp BLE MAC address: '))).trim().toUpperCase();
+  const email = required(args.email ?? (await prompter.ask('Dyson account email: ')), 'email address');
+  const password = required(await prompter.askSecret('Dyson account password: '), 'password');
+  const serial = required(args.serial ?? (await prompter.ask('Lamp serial number: ')), 'serial number').toUpperCase();
+  const mac = required(args.mac ?? (await prompter.ask('Lamp BLE MAC address: ')), 'MAC address').toUpperCase();
 
   const cloud = new DysonCloud({ country, culture, debug: args.debug === 'true' });
 
   console.log('\nRequesting a one-time code…');
   const challengeId = await cloud.beginLogin(email);
   console.log('Dyson has emailed you a 6-digit code.');
-  const otpCode = (await prompter.ask('Code from the email: ')).trim();
+  const otpCode = required(await prompter.ask('Code from the email: '), 'one-time code');
 
   const { token, accountId } = await cloud.completeLogin(email, password, challengeId, otpCode);
   console.log(`Logged in. Account ${accountId}`);
