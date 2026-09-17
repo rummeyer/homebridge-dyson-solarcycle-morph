@@ -11,6 +11,14 @@
 
 /** Fragmented request/response channel used for the authentication handshake. */
 export const CHAR_AUTH = '2dd10011-1c37-452d-8979-d1b4a787d0a4';
+/**
+ * Signal strength as the lamp sees it, int8 dBm, notified while connected.
+ *
+ * BlueZ drops its own RSSI once a device is connected — it is an advertising
+ * property — so this is the only reading available during a session.
+ */
+export const CHAR_RSSI = '2dd10013-1c37-452d-8979-d1b4a787d0a4';
+
 /** Generic attribute write channel (see DAYLIGHT_MODE_* payloads). */
 export const CHAR_WRITE_ATTR = '2dd10021-1c37-452d-8979-d1b4a787d0a4';
 

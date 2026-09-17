@@ -25,6 +25,7 @@ import {
   CHAR_COLOR_TEMP,
   CHAR_MOTION,
   CHAR_POWER,
+  CHAR_RSSI,
   CHAR_WRITE_ATTR,
   DAYLIGHT_MODE_DISABLE,
   DysonMessage,
@@ -40,6 +41,7 @@ import {
 /** Characteristics we look for. Anything else the lamp exposes is ignored. */
 const WANTED_CHARACTERISTICS = new Set([
   CHAR_AUTH,
+  CHAR_RSSI,
   CHAR_POWER,
   CHAR_BRIGHTNESS_LM,
   CHAR_COLOR_TEMP,
@@ -98,12 +100,22 @@ const MODE_SETTLE_MS = 200;
 const WEAK_RSSI_DBM = -80;
 
 /**
- * Change in signal strength worth reporting.
+ * How often to report signal strength.
  *
- * Small enough to show a lamp being moved, large enough that ordinary drift
- * does not fill the log.
+ * The lamp sends readings several times a second and they swing by several dBm
+ * between them, so reporting on change — at any threshold — fills the log with
+ * noise. A reading a minute is enough to tell whether a lamp is too far away,
+ * which is the only question it has to answer.
  */
-const RSSI_REPORT_STEP_DBM = 6;
+const RSSI_REPORT_INTERVAL_MS = 60_000;
+
+/**
+ * Spread within a reporting window that points at interference.
+ *
+ * Distance and obstacles give a steady reading; a lamp that is not moving
+ * cannot swing this far on its own, so something else is using the band.
+ */
+const NOISY_SPREAD_DB = 20;
 
 /**
  * How long to wait for a slider to settle before writing. HomeKit emits several
@@ -218,8 +230,14 @@ export class DysonMorphLamp extends EventEmitter {
   private pollTimer?: NodeJS.Timeout;
   /** Most recent reading, reported when the link drops. */
   private lastRssi?: number;
-  /** Last reading actually logged, so only real changes are reported. */
+  /** Last value reported, for the trend note. */
   private reportedRssi?: number;
+  /** Readings since the last report. The spread matters as much as the mean. */
+  private rssiSum = 0;
+  private rssiCount = 0;
+  private rssiMin = 0;
+  private rssiMax = 0;
+  private rssiReportedAt = 0;
   private manualModeSetAt = 0;
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
@@ -464,9 +482,10 @@ export class DysonMorphLamp extends EventEmitter {
     // "correct" the lamp to a state nobody is asking for any more.
     this.desired = { ...this.state };
     await this.subscribeToState();
+    await this.subscribeToSignal();
     this.startPolling();
-    const rssi = await this.readSignalStrength();
-    this.reportedRssi = rssi;
+    const rssi = this.lastRssi;
+    this.resetSignalWindow(rssi);
     this.log.info(
       `Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}${this.describeSignal(rssi)}`,
     );
@@ -498,13 +517,16 @@ export class DysonMorphLamp extends EventEmitter {
 
     const device = await adapter.waitDevice(this.mac, DISCOVERY_TIMEOUT_MS);
     await this.markTrusted(device);
+    await this.readAdvertisedSignal(device);
 
     let lastError: unknown;
     for (let attempt = 1; attempt <= CONNECT_ATTEMPTS; attempt++) {
       try {
         await device.connect();
         if (attempt > 1) {
-          this.log.debug(`Connected to ${this.mac} on attempt ${attempt}`);
+          // Repeated attempts point at collisions on the advertising channels,
+          // which is what interference looks like from here.
+          this.log.info(`Connected to ${this.mac} on attempt ${attempt} of ${CONNECT_ATTEMPTS}`);
         }
         return device;
       } catch (error) {
@@ -722,19 +744,18 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Read the signal strength, remembering it for the log.
+   * Take the adapter's reading while the lamp is still advertising.
    *
-   * A weak link and a bug in the plugin produce the same symptom — repeated
-   * disconnects — and only the number distinguishes them.
+   * BlueZ publishes RSSI only for devices it is hearing; the property goes away
+   * once one is connected. So this is read before connecting, and the lamp's own
+   * reports take over from there.
    */
-  private async readSignalStrength(): Promise<number | undefined> {
-    const raw = await this.device?.getRSSI().catch(() => undefined);
+  private async readAdvertisedSignal(device: Device): Promise<void> {
+    const raw = await device.getRSSI().catch(() => undefined);
     const rssi = typeof raw === 'string' ? Number.parseInt(raw, 10) : raw;
-    if (typeof rssi !== 'number' || Number.isNaN(rssi)) {
-      return undefined;
+    if (typeof rssi === 'number' && !Number.isNaN(rssi)) {
+      this.lastRssi = rssi;
     }
-    this.lastRssi = rssi;
-    return rssi;
   }
 
   /** Describe the signal for a log line, or nothing when it is unavailable. */
@@ -743,26 +764,50 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Report the signal when it has moved enough to mean something.
+   * Report the signal at most once a minute.
    *
-   * Logging every reading would bury the log; logging none leaves the one
-   * question a user can act on — is it too far away — unanswerable.
+   * Logging every reading buries everything else; logging none leaves the one
+   * question a user can act on — is it too far away — unanswerable. The average
+   * since the last report says more than whichever value happened to arrive, as
+   * consecutive readings differ by several dBm.
    */
-  private reportSignalChange(rssi: number | undefined): void {
-    if (rssi === undefined) {
+  private reportSignalChange(rssi: number): void {
+    this.rssiMin = this.rssiCount === 0 ? rssi : Math.min(this.rssiMin, rssi);
+    this.rssiMax = this.rssiCount === 0 ? rssi : Math.max(this.rssiMax, rssi);
+    this.rssiSum += rssi;
+    this.rssiCount++;
+    if (Date.now() - this.rssiReportedAt < RSSI_REPORT_INTERVAL_MS) {
       return;
     }
+
+    const mean = Math.round(this.rssiSum / this.rssiCount);
+    const spread = this.rssiMax - this.rssiMin;
     const previous = this.reportedRssi;
-    if (previous !== undefined && Math.abs(rssi - previous) < RSSI_REPORT_STEP_DBM) {
-      this.log.debug(`Signal from ${this.mac}: ${rssi} dBm`);
-      return;
-    }
-    this.reportedRssi = rssi;
-    const trend = previous === undefined ? '' : rssi > previous ? ' (improving)' : ' (worsening)';
-    const advice = rssi <= WEAK_RSSI_DBM
+    this.resetSignalWindow(mean);
+
+    const trend = previous === undefined || Math.abs(mean - previous) < 3
+      ? ''
+      : mean > previous ? ' (improving)' : ' (worsening)';
+    // The mean says how far away the lamp is; the spread says whether something
+    // else is using the band. A stationary lamp cannot swing by 20 dB on its own.
+    const interference = spread >= NOISY_SPREAD_DB
+      ? ' — that spread suggests interference rather than distance; check for Wi-Fi or Zigbee on nearby channels'
+      : '';
+    const advice = mean <= WEAK_RSSI_DBM
       ? ' — at this level the connection times out and drops; move the lamp or the Homebridge host closer'
       : '';
-    this.log.info(`Signal from ${this.mac}: ${rssi} dBm${trend}${advice}`);
+    this.log.info(
+      `Signal from ${this.mac}: ${mean} dBm average, ${this.rssiMin} to ${this.rssiMax}${trend}${advice}${interference}`,
+    );
+  }
+
+  private resetSignalWindow(reported?: number): void {
+    this.rssiSum = 0;
+    this.rssiCount = 0;
+    this.rssiReportedAt = Date.now();
+    if (reported !== undefined) {
+      this.reportedRssi = reported;
+    }
   }
 
   /**
@@ -774,6 +819,22 @@ export class DysonMorphLamp extends EventEmitter {
    * the connection down with it. Notifications also pick up changes made at the
    * lamp itself, which polling only caught on its next tick.
    */
+  private async subscribeToSignal(): Promise<void> {
+    const characteristic = this.chars[CHAR_RSSI];
+    if (!characteristic) {
+      return;
+    }
+    characteristic.on('valuechanged', (value) => {
+      if (value.length) {
+        this.lastRssi = value.readInt8(0);
+        this.reportSignalChange(this.lastRssi);
+      }
+    });
+    await characteristic.startNotifications().catch((error: unknown) => {
+      this.log.debug(`No signal reports from ${this.mac}: ${describeError(error)}`);
+    });
+  }
+
   private async subscribeToState(): Promise<void> {
     const sources: [string, (value: Buffer) => Partial<LampState> | undefined][] = [
       [CHAR_POWER, (value) => (value.length ? { on: value[0] !== 0 } : undefined)],
@@ -839,7 +900,6 @@ export class DysonMorphLamp extends EventEmitter {
       }
       void this.enqueue(async () => {
         this.publishFromLamp(await this.readState());
-        this.reportSignalChange(await this.readSignalStrength());
       }, 'poll').catch((error: unknown) => {
         // A failed read is not a reason to drop a working connection; the next
         // poll, or a notification, will catch up.

@@ -168,8 +168,21 @@ signal go together.
 | −75 dBm | workable |
 | −85 dBm | will not hold |
 
-Move the lamp or the Homebridge host closer to each other, or put a Bluetooth
-adapter nearer the lamp.
+**The level answers one question — is it too far away.** It says nothing about
+interference, which is usually the real cause of a link that keeps dropping at
+an otherwise workable level. For that, read:
+
+- how often `Lost connection` appears — the direct measure
+- `Connected … on attempt 3 of 4` — repeated attempts mean collisions on the
+  advertising channels, which is where a connection is established
+- the **spread** on the signal line, not the average. A lamp that is not moving
+  cannot swing by 20 dB on its own; if it does, something else is using the band
+
+On a Raspberry Pi, Wi-Fi and Bluetooth share one chip and often one antenna, so
+an active Wi-Fi link is the first thing to rule out — particularly on channel 1,
+which sits directly on the BLE advertising channel at 2402 MHz. If the host is
+on Ethernet anyway, `sudo nmcli radio wifi off` settles it. Zigbee is worth
+checking next: channels 15, 20 and 25 sit in the gaps between Wi-Fi 1, 6 and 11.
 
 **It keeps failing with `le-connection-abort-by-local` and never connects.**
 The lamp's Bluetooth stack can reach a state where it advertises normally — a
