@@ -276,7 +276,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.manualModeSetAt = 0;
     await this.refreshState();
     this.keepaliveTimer = setInterval(() => void this.keepalive(), KEEPALIVE_INTERVAL_MS);
-    this.log.info(`Connected to Dyson Morph at ${this.mac}`);
+    this.log.info(`Connected to Dyson Morph at ${this.mac} — ${describeState(this.state)}`);
     this.emit('connected');
   }
 
@@ -399,17 +399,34 @@ export class DysonMorphLamp extends EventEmitter {
 
   private async refreshState(): Promise<void> {
     const patch: Partial<LampState> = {};
-    const power = await this.chars[CHAR_POWER]?.readValue().catch(() => undefined);
+    const failures: string[] = [];
+    const read = async (uuid: string, label: string): Promise<Buffer | undefined> => {
+      try {
+        return await this.chars[uuid]?.readValue();
+      } catch (error) {
+        failures.push(`${label}: ${describe(error)}`);
+        return undefined;
+      }
+    };
+
+    const power = await read(CHAR_POWER, 'power');
     if (power?.length) {
       patch.on = power[0] !== 0;
     }
-    const brightness = await this.chars[CHAR_BRIGHTNESS_LM]?.readValue().catch(() => undefined);
+    const brightness = await read(CHAR_BRIGHTNESS_LM, 'brightness');
     if (brightness && brightness.length >= 2) {
       patch.brightness = lumensToPercent(brightness.readUInt16LE(0));
     }
-    const kelvin = await this.chars[CHAR_COLOR_TEMP]?.readValue().catch(() => undefined);
+    const kelvin = await read(CHAR_COLOR_TEMP, 'colour temperature');
     if (kelvin && kelvin.length >= 2) {
       patch.kelvin = kelvin.readUInt16LE(0);
+    }
+
+    // Reads failing after a successful handshake means the session was dropped
+    // or never really authorised — worth surfacing rather than silently
+    // serving stale state to HomeKit.
+    if (failures.length > 0) {
+      this.log.warn(`Could not read lamp state (${failures.join('; ')})`);
     }
     this.patchState(patch);
   }
@@ -479,9 +496,14 @@ export class DysonMorphLamp extends EventEmitter {
     const changed = (Object.keys(patch) as (keyof LampState)[]).some((k) => this.state[k] !== next[k]);
     this.state = next;
     if (changed) {
+      this.log.debug(`State now ${describeState(next)}`);
       this.emit('state', next);
     }
   }
+}
+
+function describeState(state: LampState): string {
+  return `${state.on ? 'on' : 'off'}, ${state.brightness}%, ${state.kelvin}K`;
 }
 
 function sleep(ms: number): Promise<void> {
