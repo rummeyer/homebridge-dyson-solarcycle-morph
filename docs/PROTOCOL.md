@@ -355,6 +355,11 @@ Settled, and recorded so they are not asked again:
 - The lamp's Auto and movement switches are `2dd11006` and `2dd11007`, not
   attributes. Nothing in `0x2000`–`0x2140` touches them.
 - Brightness and colour temperature are **not** attributes, in either direction.
-  Neither readable nor writable as one; the direct characteristics are the only
-  path, so unacknowledged writes, pacing and reconciliation are load-bearing.
+  Neither readable nor writable as one. The app writes them to the same
+  characteristics this client does — `he0/h.java` sends a two-byte value to
+  `2dd11001` and `2dd11009` through `he0/j0.java`, with no acknowledgement and
+  no read-back — and it could not do otherwise, since both are
+  write-without-response. There is no acknowledged route to them, which is why
+  pacing and reconciliation are load-bearing rather than workarounds. The
+  acknowledged attribute channel is for settings, and holds neither value.
 - `13 20 01 00 00` is a message body without its type, not a command.
