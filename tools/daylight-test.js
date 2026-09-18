@@ -236,6 +236,11 @@ class Session {
       [CHAR_BRIGHTNESS_LM]: 'lumens',
       [CHAR_COLOR_TEMP]: 'kelvin',
       [CHAR_POWER]: 'power',
+      '2dd11000-1c37-452d-8979-d1b4a787d0a4': 'pct',
+      '2dd11004-1c37-452d-8979-d1b4a787d0a4': '1004',
+      '2dd11006-1c37-452d-8979-d1b4a787d0a4': 'auto',
+      '2dd11007-1c37-452d-8979-d1b4a787d0a4': 'movemode',
+      '2dd11008-1c37-452d-8979-d1b4a787d0a4': '1008',
     };
     for (const [uuid, label] of Object.entries(labels)) {
       const characteristic = this.chars[uuid];
