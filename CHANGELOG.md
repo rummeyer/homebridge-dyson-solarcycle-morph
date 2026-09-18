@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] — 2026-09-18
 
 ### Added
 
@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it lights on movement and goes out once the room is still, are both switches
   now. They show the true state and follow the buttons on the lamp itself. Turn
   either off per light with `autoBrightnessSwitch` and `movementSwitch`.
+
+### Changed
+
+- The README lists the three mode switches in one place, with the settings that
+  turn each off and how the Movement switch differs from the motion sensor.
+
+### Fixed
+
+- The notes said the lamp trimmed brightness to track daylight from its location
+  and the time of day. Daylight mode moves colour temperature; what moves
+  brightness is auto brightness and the ramp towards a newly written value.
 
 ## [0.3.0] — 2026-09-18
 
