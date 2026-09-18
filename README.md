@@ -53,7 +53,7 @@ lamp's key — happens once, during pairing.
 | **Lamp** | Dyson Solarcycle Morph or Lightcycle Morph, added to your MyDyson account |
 | **Homebridge** | 2.0.0 or newer, on Linux |
 | **Node.js** | 22.18, 24 or 26 |
-| **Range** | The Homebridge host must be within Bluetooth range of the lamp |
+| **Range** | The Homebridge host must be within Bluetooth range of the lamp, and stay there — these lamps have no Wi-Fi, so there is no cloud fallback |
 
 **The lamp must already be in the MyDyson app.** This is not a formality. The
 lamp ignores every command until it is handed a key that only Dyson can issue,
@@ -61,8 +61,9 @@ against the account the lamp is registered to — there is no way to read it fro
 the device. If the lamp is not on your account, pairing returns a 404 and there
 is nothing the plugin can do about it.
 
-**Linux only.** The plugin talks to BlueZ over D-Bus, so macOS and Windows will
-not work. A Raspberry Pi running Homebridge is the usual home for it.
+**Linux only.** macOS and Windows will not work, for Bluetooth reasons that are
+not worth going into here. A Raspberry Pi running Homebridge is the usual home
+for it.
 
 ## Step 1 — Install the plugin
 
@@ -92,40 +93,37 @@ Open the plugin's **Settings**. The page walks through it:
 
 Restart Homebridge when the page says so.
 
-### What is stored, and where
-
-The lamp's key and your account session go into the plugin's own storage
-directory, not into `config.json`. The file you can open in the Homebridge UI —
-and paste into a support thread — holds nothing sensitive.
-
-Your password is only needed to exchange a code for a session. **Forget
-password** removes it afterwards; the lamp keeps working, because its key does
-not expire.
-
 ## Step 4 — Add the lamp to the Home app
 
 The child bridge has its own QR code, under **Bridge Settings**. Scan it in the
 Home app the same way you paired Homebridge itself.
 
-## Everyday use
+## Using it
 
-**Brightness will not always land exactly where you put it.** The lamp ramps
-towards a value rather than jumping to it, and with auto brightness on it keeps
-trimming the level to suit the room. Asking for 100% and seeing 88% is the lamp
-working as designed. The Auto Brightness switch turns the trimming off.
+**Turning it on, dimming it, changing the colour** — all the usual Home app
+controls, and Siri.
 
-**Changes made at the lamp show up in the Home app**, usually at once and at
-worst within a minute.
+**The three switches can be automated like anything else.** A few that people
+tend to want:
 
-**When the lamp is out of reach**, the Home app shows it as *No Response* rather
-than the last value it knew, and commands fail instead of being silently queued.
-The plugin reconnects on its own and reads the lamp's real state when it does.
+- Movement on when you leave for work, off when you get home
+- Daylight on in the morning, so the lamp cools towards midday and warms again by evening on its own
+- Auto Brightness off when you sit down to watch a film
 
-**Switching off is checked.** Control commands are unacknowledged, so one can be
-dropped in transit. Power is read back shortly after and resent if it did not
-take — a lamp still lit after being switched off is the one failure nobody can
-work around. Brightness and colour temperature are deliberately not checked,
-because the lamp adjusts them itself and a correction would fight it.
+**Brightness will not always land exactly where you put it.** The lamp eases
+towards a new level rather than jumping, and with Auto Brightness on it keeps
+adjusting to suit the room. Asking for 100% and seeing 88% is the lamp doing its
+job — turn Auto Brightness off if you would rather it stayed put.
+
+**Setting a colour temperature ends daylight tracking**, and the Daylight switch
+turns itself off when you do. That is the lamp's own behaviour, not something
+the plugin decides. Flip the switch back on to resume.
+
+**Changes made at the lamp appear in the Home app**, usually straight away.
+
+**Out of range, the lamp shows as *No Response*** rather than the last thing it
+knew, and commands fail rather than being quietly dropped. It comes back on its
+own once the link does.
 
 ## Settings
 
@@ -146,24 +144,42 @@ Everything except the lights is optional.
 ## If something goes wrong
 
 **The lamp shows as *No Response*.** There is no Bluetooth link at that moment.
-The plugin keeps reconnecting; if it does not recover, read on.
+The plugin keeps trying; it usually sorts itself out.
 
-**The log repeats `le-connection-abort-by-local` and never connects.** The lamp's
-Bluetooth stack can reach a state where it advertises perfectly well — a scan
-finds it, at a good signal strength — but refuses every connection.
-**Disconnecting the lamp from power for ten seconds clears it**, reliably.
-Nothing on the Homebridge side does. The plugin thins its attempts out to five
-minutes apart, so it will pick the lamp up again by itself once you have.
+**It never connects at all, however long you leave it.** Unplug the lamp for ten
+seconds. Its Bluetooth can get into a state where it looks perfectly healthy but
+refuses every connection, and a power cycle is the only thing that clears it.
+The plugin will pick the lamp up again by itself afterwards.
 
-**It connects, drops, reconnects, over and over.** Look at the signal line in the
-log:
+**It connects, drops, reconnects, over and over.** Usually either the lamp is too
+far from the Homebridge host, or something nearby is using the same airwaves —
+Wi-Fi especially. [Reading the signal](#reading-the-signal) below shows which.
+
+**It says the lamp is not paired yet.** No key is stored for that serial. Open
+the plugin's settings and authorise your account again, and check the serial
+matches the lamp exactly — that is what the key is filed under.
+
+**Pairing returns a 404.** The lamp is not on that Dyson account. It has to be
+added in the MyDyson app first; there is no way round this.
+
+**A few failed attempts at startup are normal.** Connecting to this lamp works
+about two times in three whatever anyone does, so the plugin simply tries again.
+Only a cycle that never succeeds is worth looking at.
+
+## Under the hood
+
+Not needed to use the plugin, but useful when something looks odd.
+
+### Reading the signal
+
+Once a minute the log carries a line like:
 
 ```
 Signal from F0:… : -73 dBm average, -80 to -67
 ```
 
-The **average** answers one question — is the lamp too far away. Around −60 dBm
-is comfortable, −75 workable, −85 will not hold.
+The **average** answers one question: is the lamp too far away. Around −60 dBm is
+comfortable, −75 workable, −85 will not hold.
 
 The **spread** answers a different one. A lamp that is not moving cannot swing by
 20 dB on its own, so a wide spread means something else is using the band. So do
@@ -176,43 +192,44 @@ which sits directly on a Bluetooth advertising channel. If the host is on
 Ethernet anyway, `sudo nmcli radio wifi off` settles it. Zigbee is worth checking
 next: channels 15, 20 and 25 sit in the gaps between Wi-Fi 1, 6 and 11.
 
-**`… is not paired yet`.** No key is stored for that serial. Open the plugin's
-settings and authorise your account. Check the serial matches the lamp exactly —
-it is what the key is filed under.
+Moving the host closer is worth more than any of it. One measured move took a
+link from −76 dBm with two drops an hour to −50 dBm with none.
+
+### Why switching off is double-checked
+
+Commands to this lamp are unacknowledged: the plugin sends one and the lamp says
+nothing back, so a command can be lost with nothing to show for it. Power is
+therefore read back shortly after and resent if it did not take — a lamp still
+lit after being switched off is the one failure nobody can work around.
+
+Brightness and colour temperature are deliberately *not* checked, because the
+lamp moves them itself and a correction would fight it.
+
+### What is stored, and where
+
+The lamp's key and your account session go into the plugin's own storage
+directory, not into `config.json`. The file you can open in the Homebridge UI —
+and paste into a support thread — holds nothing sensitive.
+
+Your password is only needed to exchange a code for a session. **Forget
+password** removes it afterwards; the lamp keeps working, because its key does
+not expire.
+
+### Setting up without the Homebridge UI
+
+`dyson-morph-pair` does the same pairing from a terminal. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+### Rarer errors
 
 **`PayloadB failed HMAC verification`.** The stored key is wrong or corrupted.
 Pair the lamp again.
-
-**404 when fetching the key.** The lamp is not registered to that Dyson account.
-See *Before you start*.
 
 **`Not authorized` from D-Bus.** Only on distributions that restrict BlueZ
 access — Debian and Raspberry Pi OS already allow it. If yours does not, create
 `/etc/dbus-1/system.d/node-ble.conf` with a policy for the user Homebridge runs
 as, then restart `dbus`. There is an example in
 [the node-ble documentation](https://github.com/chrvadala/node-ble#provide-permissions).
-
-## Good to know
-
-**Bluetooth only.** These lamps have no Wi-Fi, so the Homebridge host has to be
-within range. There is no cloud fallback when it is not.
-
-**A few failed attempts at startup are normal.** Connecting to this lamp
-succeeds roughly two times in three, whatever you do, so the plugin simply tries
-several times in quick succession. Only a cycle that never succeeds is worth
-looking at.
-
-**Setting a colour temperature ends daylight tracking.** The Daylight switch
-turns itself off when you do, because that is what the lamp does — it leaves the
-mode the moment a colour temperature is set by hand, whether from HomeKit, the
-app or its own buttons. Turn the switch back on to resume tracking.
-
-**Any of the switches can be left out**, per light: `daylightSwitch`,
-`autoBrightnessSwitch` and `movementSwitch`. The motion sensor is the other way
-round — off unless `motionSensor` turns it on.
-
-**Setup without the Homebridge UI.** `dyson-morph-pair` does the same pairing
-from a terminal. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## For developers
 
