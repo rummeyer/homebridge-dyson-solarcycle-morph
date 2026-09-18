@@ -165,11 +165,9 @@ export interface LampState {
   /**
    * Whether the lamp is tracking daylight.
    *
-   * Carried across reconnects rather than reset, because the characteristic
-   * cannot be read: the lamp only reports the mode when it changes. The value
-   * a session starts with is therefore the last one observed, which a
-   * notification corrects as soon as anything moves it. Wrong only if the mode
-   * was changed while nothing was connected.
+   * Asked for on connecting and reported by the lamp on every change. Carried
+   * across reconnects rather than reset, so that a lamp which does not answer
+   * starts from the last value seen rather than from a guess.
    */
   daylight: boolean;
 }
@@ -902,8 +900,8 @@ export class DysonMorphLamp extends EventEmitter {
         },
       ],
       [CHAR_COLOR_TEMP, (value) => (value.length >= 2 ? { kelvin: value.readUInt16LE(0) } : undefined)],
-      // The only source for daylight mode: the characteristic cannot be read,
-      // so the mode is knowable only while subscribed.
+      // Daylight mode arrives here twice over: the reply to the question asked
+      // on connecting, and a report whenever it changes.
       [
         CHAR_WRITE_ATTR,
         (value) => {
@@ -1039,8 +1037,8 @@ export class DysonMorphLamp extends EventEmitter {
   /**
    * Take what the lamp reports, and read daylight mode out of it where it can.
    *
-   * The mode cannot be read, only subscribed to, so a session that starts while
-   * the lamp is already tracking has no way to know until something changes it.
+   * A fallback for a lamp that does not answer the question asked on connecting,
+   * which would otherwise leave the mode unknown until something changed it.
    * Colour temperature moving when nobody asked for it is the tell: with
    * daylight mode off, nothing but a write moves it.
    *

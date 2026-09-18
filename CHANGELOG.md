@@ -5,6 +5,29 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Daylight tracking is a switch. It reports what the lamp is actually doing,
+  following the button on the lamp's base and the MyDyson app as well as
+  HomeKit, and it can be turned on and off. Setting a colour temperature ends
+  the tracking, which is the lamp's own behaviour, and the switch follows that
+  too. Turn it off per light with `daylightSwitch`.
+
+### Fixed
+
+- A write arriving immediately behind another was discarded, silently. HomeKit
+  sets brightness and colour temperature together whenever a scene is applied,
+  and the second of the two was being lost: on a CF06, colour temperature
+  reached its target in 1 of 8 attempts written back to back, and 8 of 8 when
+  spaced 100 ms apart. Control writes are now paced.
+- The lamp is no longer taken out of daylight mode before every brightness and
+  colour-temperature write. It never needed to be — values land while the lamp
+  is tracking — and the write that was supposed to do it was never a valid
+  command in the first place. Brightness changes now leave daylight tracking
+  running; colour-temperature changes still end it, which is the lamp's doing.
+
 ## [0.2.2] — 2026-09-17
 
 ### Added

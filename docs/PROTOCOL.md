@@ -209,6 +209,59 @@ Everything else in `0x2000`–`0x2040` returns nothing.
 The app also carries light presets (`SYNCHRONISED`, `STUDY`, `RELAX`,
 `PRECISION`), each its own attribute, each written as a 1-byte `01`.
 
+## What the MyDyson app does
+
+Most of this document's harder facts came from the Android app, and re-deriving
+them is a slow job, so here is the map. Package `com.dyson.mobile.android`,
+version 6.4.26360 from APKMirror as an `.apkm` bundle; `base.apk` inside it holds
+the code, and all the BLE work is in `classes2.dex`. `jadx -d out --no-res
+--no-debug-info base/classes2.dex` takes a couple of minutes. Names are
+obfuscated and will differ between versions, so treat these as a starting point
+rather than addresses.
+
+| class | what it holds |
+| --- | --- |
+| `d50/e.java` | the attribute service and characteristic (`2DD10020`, `2DD10021`) |
+| `d50/a.java` | the auth service and characteristic (`2DD10011`) |
+| `b50/c.java` | which message types go to which characteristic |
+| `vc0/a.java` | the light's attribute table — the ids in the section above |
+| `he0/u.java` | the light machine's BLE interface, one method per operation |
+| `he0/n0.java`, `he0/k0.java` | attribute write: `0x93`, and the `0x94` status check |
+| `he0/a0.java`, `he0/x.java` | attribute read: `0x90` |
+| `nd0/e.java` | `DELAY_BETWEEN_WRITING_MESSAGES_MILLS` |
+| `com/dyson/mobile/android/light/control/e.java` | the light modes, with their colour temperature and brightness |
+
+`b50/c.java` is the useful one for orientation: it routes each message type to a
+characteristic, which is how the two channels separate.
+
+- With a payload — `1, 2, 3, 6, 8, 14` to the auth channel; `48, 50, 66, 68, 80`
+  to the attribute channel.
+- Without one — `4` to the auth channel; `6, 10, 12, 64, 70, 81` to the
+  attribute channel.
+
+The attribute types this client uses (`0x90`, `0x93`) are not in those lists;
+they are built directly in `he0`, which is why they were not found by guessing.
+
+**The app never mentions `2dd11001`, `2dd11005` or `2dd11009`.** It does not set
+brightness or colour temperature as values at all: `he0/u.java`'s `U()` takes a
+*light mode* — `SYNCHRONISED`, `STUDY`, `RELAX`, `PRECISION`, or a custom one,
+each carrying a colour temperature and a brightness — and activates it by
+writing `01` to the attribute that names it. The values themselves are not in
+any readable attribute, and `0x201a` (write-only, 64 bytes) is the obvious
+candidate for where a custom mode's definition goes. Nothing here was decoded.
+
+That path is no use for a HomeKit slider, and the direct characteristics are.
+Two things were measured before concluding that:
+
+- Every readable two-byte attribute was written with a changed value and put
+  back. All seven were acknowledged, none moved the light.
+- Every attribute from `0x2000` to `0x2040` was read. None held the lamp's live
+  brightness or colour temperature.
+
+**The app spaces its writes**, 300 ms between messages in most places and 500 ms
+in a few, which is the same problem this client solves with `MIN_WRITE_GAP_MS`.
+Ours is 150 ms, measured; theirs is more conservative.
+
 ## Daylight mode
 
 Measured on 2026-09-18 against a CF06.
@@ -274,6 +327,17 @@ before eight-trial arms separated them.
   connect: the next client connects on attempt 1 and then waits out
   `REAUTH_PAYLOAD_B`. Only an explicit `bluetoothctl disconnect` clears it.
   Worth ruling out before reading a stuck lamp as the refuse-all state above.
-- Which attributes carry brightness and colour temperature, among the seven
-  two-byte ones above. Worth settling: the attribute channel acknowledges its
-  writes, and these characteristics do not.
+- `0x201a`: write-only, 64 bytes, and the likely home of a custom light mode's
+  definition. Decoding it would open up the lamp's preset modes, which are the
+  one feature of the app this client has no answer to. Read `he0/u.java`'s `U()`
+  and whatever `a.k()` maps a mode to before starting.
+- What the rest of the attributes in the table mean. Reads are free and cannot
+  disturb anything, so correlating them against changes made in the app is the
+  cheap way in.
+
+Settled, and recorded so they are not asked again:
+
+- Brightness and colour temperature are **not** attributes, in either direction.
+  Neither readable nor writable as one; the direct characteristics are the only
+  path, so unacknowledged writes, pacing and reconciliation are load-bearing.
+- `13 20 01 00 00` is a message body without its type, not a command.

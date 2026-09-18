@@ -180,9 +180,11 @@ succeeds roughly two times in three, whatever you do, so the plugin simply tries
 several times in quick succession. Only a cycle that never succeeds is worth
 looking at.
 
-**Daylight mode cannot be read back.** The lamp accepts the setting but will not
-report it, so the plugin re-asserts manual control before writing a value rather
-than guessing.
+**Daylight tracking appears as its own switch.** It shows what the lamp is
+actually doing, following the button on the lamp's base and the MyDyson app as
+well as HomeKit. Setting a colour temperature ends the tracking — that is the
+lamp's own behaviour, not the plugin's — so the switch turns itself off when you
+do. Turn it off per light with `daylightSwitch` if you would rather not have it.
 
 **Setup without the Homebridge UI.** `dyson-morph-pair` does the same pairing
 from a terminal. See [CONTRIBUTING.md](CONTRIBUTING.md).
