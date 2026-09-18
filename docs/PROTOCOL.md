@@ -201,6 +201,7 @@ held, which is a better starting point than the shapes alone.
 | attribute | value read | note |
 | --- | --- | --- |
 | `0x2013` | `0` | daylight tracking |
+| `0x2026` | `0` | not auto brightness, despite the app's auto-brightness screen writing it; see below |
 | `0x2006` | `300` | |
 | `0x2007` | `30` | |
 | `0x2014` | `424` | |
@@ -209,7 +210,10 @@ held, which is a better starting point than the shapes alone.
 | `0x2018` | `3000` | plausibly a colour-temperature bound |
 | `0x2023` | `480` | |
 | `0x2024` | `1080` | |
-| `0x2009` `0x200b` `0x200d` `0x201c` `0x201e` `0x201f` `0x2021` `0x2026` `0x2029` `0x2032` | `0` | flags |
+| `0x201e` | `0` | **STUDY preset** |
+| `0x201f` | `0` | **RELAX preset** |
+| `0x2021` | `0` | **PRECISION preset** |
+| `0x2009` `0x200b` `0x200d` `0x201c` `0x2029` `0x2032` | `0` | flags |
 | `0x200a` `0x201b` | `1` | flags |
 | `0x2003` `0x2004` | 8 bytes | doubles; `0x2003` and `0x2004` look like a latitude and longitude |
 | `0x201d` | 8 bytes | |
@@ -218,8 +222,8 @@ held, which is a better starting point than the shapes alone.
 
 Everything else in `0x2000`–`0x2040` returns nothing.
 
-The app also carries light presets (`SYNCHRONISED`, `STUDY`, `RELAX`,
-`PRECISION`), each its own attribute, each written as a 1-byte `01`.
+Three of those attributes are the lamp's preset modes; see
+[Preset modes](#preset-modes).
 
 ## What the MyDyson app does
 
@@ -267,13 +271,11 @@ mode, both via `he0/b.java`, one byte each. The bindings say which is which:
 `fd0/b0.java` calls `cVar.a.y(z)` from the auto-brightness screen and
 `fd0/e1.java` calls `cVar.a.M(z)` from the movement one.
 
-The app does not set brightness or colour temperature as values, though:
-`he0/u.java`'s `U()` takes a *light mode* — `SYNCHRONISED`, `STUDY`, `RELAX`,
-`PRECISION`, or a custom one, each carrying a colour temperature and a
-brightness — and activates it by writing `01` to the attribute that names it.
-`0x201a` (write-only, 64 bytes) is the obvious candidate for where a custom
-mode's definition goes. Nothing there was decoded, and that path is no use for a
-HomeKit slider in any case.
+It also drives the lamp through *light modes*: `he0/u.java`'s `U()` takes one —
+`SYNCHRONISED`, `STUDY`, `RELAX`, `PRECISION`, or a custom one, each carrying a
+colour temperature and a brightness — and activates it by writing `01` to the
+attribute that names it, which `he0/a.java`'s `k()` supplies. See
+[Preset modes](#preset-modes) for which attribute is which.
 
 **The app spaces its writes**, 300 ms between messages in most places and 500 ms
 in a few, which is the same problem this client solves with `MIN_WRITE_GAP_MS`.
@@ -337,6 +339,31 @@ temperature it held before, which are not the tracked values on display. With
 tracking on, the drift is visible: colour temperature moved 5280 K to 5296 K over
 two minutes, brightness dithering within about 3 lm.
 
+## Preset modes
+
+The app offers four: `SYNCHRONISED`, `STUDY`, `RELAX` and `PRECISION`. Three are
+attributes, activated by writing `01`:
+
+| preset | attribute | where it put a CF06 |
+| --- | --- | --- |
+| STUDY | `0x201e` | 4741 K, 503 lm |
+| RELAX | `0x201f` | 2900 K, 251 lm |
+| PRECISION | `0x2021` | 4600 K, 1000 lm |
+
+`SYNCHRONISED` is not among them — `he0/a.java`'s `k()` returns `null` for it,
+because it is daylight tracking under another name.
+
+They behave better than anything else on this lamp. A write is acknowledged with
+`0x94`, reported with `0x97`, and they are mutually exclusive: activating RELAX
+while STUDY is on produces a second report saying STUDY is now off, without
+being asked. Writing `00` clears a preset, and the lamp keeps the brightness and
+colour temperature the preset left it at.
+
+So a client can both set and follow these, which is more than can be said for
+daylight mode. The lamp's own custom modes are a separate matter: they carry a
+name and their own values, and where those are stored is not known — `0x201a`,
+write-only and 64 bytes, is the obvious candidate.
+
 ## Writes must be spaced apart
 
 A write arriving immediately behind another is discarded, and since these
@@ -368,12 +395,9 @@ before eight-trial arms separated them.
 
 ## Open questions
 
-- **The preset modes.** `SYNCHRONISED`, `STUDY`, `RELAX` and `PRECISION`, plus
-  custom ones, are the only feature of the app this client has no answer to.
-  `he0/u.java`'s `U()` activates one by writing `01` to the attribute that names
-  it, and `0x201a` — write-only, 64 bytes — is the obvious candidate for where a
-  custom mode's definition goes. Start by reading `U()` and whatever `a.k()`
-  maps a mode to.
+- **Custom light modes.** The three built-in presets are decoded (above); a
+  custom one carries a name and its own values, and where those live is not
+  known. `0x201a` — write-only, 64 bytes — is the obvious candidate.
 - **What the rest of the attributes mean.** The table above has what each one
   held on a CF06. Reads cost nothing and cannot disturb a setting, so changing
   something in the app and reading the table again is the cheap way in.
