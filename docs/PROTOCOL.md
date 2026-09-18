@@ -144,10 +144,47 @@ treats brightness and colour temperature as fire-and-forget.
 Writing `13 20 01 00 00` to `2dd10021-…` is documented as leaving daylight mode
 so explicit values are accepted. Whether that also stops the tracking described
 above, and whether brightness writes land without it, is **not established** —
-the mode cannot be read back, so there is nothing to observe.
+the mode cannot be read back, so there is nothing to observe. Measurements on
+2026-09-18 did not settle it either: every trial ran with daylight mode already
+off, which is the condition the question is not about.
+
+## Writes must be spaced apart
+
+A write arriving immediately behind another is discarded, and since these
+characteristics are write-without-response, nothing reports it. Measured on a
+CF06 at -54 dBm, eight trials per arm, each aimed at the far end of the range so
+every trial was decisive:
+
+| spacing | colour temperature landed |
+| --- | --- |
+| none (back to back) | 1 of 8 |
+| 100 ms | 8 of 8 |
+
+The drop takes whichever write is *second*, whichever field that is — brightness
+was dropped in the one back-to-back trial where colour temperature survived. It
+is not specific to colour temperature, and it is not the daylight mode above.
+
+This is the ordinary path rather than an edge case: HomeKit sets brightness and
+colour temperature together whenever a scene is applied, and the client's
+debouncer keys on the characteristic, so the two land in the queue at the same
+instant. The client therefore paces control writes (`MIN_WRITE_GAP_MS`, 150 ms,
+a margin over the 100 ms that tested clean). Auth-channel fragments are exempt:
+they are written back to back by design and have never shown the problem.
+
+Two things follow for anyone measuring this lamp. Asking for the value it
+already holds cannot distinguish a landed write from a dropped one, so trials
+have to aim somewhere else. And a single run is not evidence — the failure is
+probabilistic, and short runs produced two different plausible-looking mechanisms
+before eight-trial arms separated them.
 
 ## Open questions
 
 - `2dd11004-…`, `2dd11006-…` and `2dd11007-…` are not decoded.
+- Whether `ensureManualMode` is needed at all is still open; it has to be tested
+  with daylight mode actually **on**.
+- An orphaned BlueZ connection presents as a handshake timeout, not as a failed
+  connect: the next client connects on attempt 1 and then waits out
+  `REAUTH_PAYLOAD_B`. Only an explicit `bluetoothctl disconnect` clears it.
+  Worth ruling out before reading a stuck lamp as the refuse-all state above.
 - Daylight mode is write-only; the plugin cannot report whether it is active.
 - Only the `0x2013` attribute is known for `2dd10021-…`.

@@ -16,6 +16,7 @@ import type { Adapter, Device, GattCharacteristic, GattServer } from 'node-ble';
 
 import { buildReauthPayloadA, buildReauthPayloadC, deriveAesKey, parseReauthPayloadB } from './crypto.js';
 import { Debouncer } from './debounce.js';
+import { Pacer } from './pace.js';
 import { OperationQueue } from './queue.js';
 import { planReconciliation } from './reconcile.js';
 import { SettleWindow } from './settle.js';
@@ -124,6 +125,16 @@ const NOISY_SPREAD_DB = 20;
 const WRITE_DEBOUNCE_MS = 400;
 
 /**
+ * Minimum spacing between control writes; see {@link Pacer} for the measurement
+ * behind it. 150 ms keeps a margin over the 100 ms that tested clean, and is
+ * still far below what anyone notices in a lamp.
+ *
+ * Not applied to the auth channel, whose fragments are written back to back by
+ * design and have never shown the problem.
+ */
+const MIN_WRITE_GAP_MS = 150;
+
+/**
  * How long after the last command to check the lamp agrees. Verification cannot
  * sit in the command's own path: the write costs a millisecond, reading it back
  * costs hundreds.
@@ -214,6 +225,7 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly operations = new OperationQueue();
 
   private readonly writes = new Debouncer(WRITE_DEBOUNCE_MS, (task, key) => this.enqueue(task, key));
+  private readonly pacer = new Pacer(MIN_WRITE_GAP_MS);
   private readonly reconciles = new Debouncer(RECONCILE_DELAY_MS, (task, key) => this.enqueue(task, key));
   private readonly settling = new SettleWindow(SETTLE_MS);
 
@@ -475,6 +487,7 @@ export class DysonMorphLamp extends EventEmitter {
 
     this.connected = true;
     this.manualModeSetAt = 0;
+    this.pacer.reset();
     this.settling.clear();
     await this.refreshState();
     // The lamp is the authority on where it is. Anything asked for before the
@@ -618,8 +631,14 @@ export class DysonMorphLamp extends EventEmitter {
     }
   }
 
-  /** Write using whichever acknowledgement mode the characteristic supports. */
+  /**
+   * Write using whichever acknowledgement mode the characteristic supports,
+   * never closer than {@link MIN_WRITE_GAP_MS} behind the previous one.
+   */
   private async write(uuid: string, value: Buffer): Promise<void> {
+    if (uuid !== CHAR_AUTH) {
+      await this.pacer.pace();
+    }
     await this.characteristic(uuid).writeValue(value, { type: this.writeTypes[uuid] ?? 'command' });
   }
 
