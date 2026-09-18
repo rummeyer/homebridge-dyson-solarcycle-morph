@@ -1,7 +1,7 @@
 {
   "name": "homebridge-dyson-solarcycle-morph",
   "displayName": "Dyson Solarcycle Morph",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Homebridge plugin for the Bluetooth LE controlled Dyson Solarcycle/Lightcycle Morph task light",
   "license": "MIT",
   "author": "Oliver Rummeyer",

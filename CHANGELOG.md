@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-09-18
+
+### Fixed
+
+- The motion sensor removed in 1.0.0 stayed in the Home app for anyone who had
+  it enabled. Not adding a service is not the same as removing one: it was
+  already on the accessory, so it remained there, still reporting motion
+  permanently. It is now taken off explicitly.
+
 ## [1.0.0] — 2026-09-18
 
 Everything the lamp will tell us over Bluetooth is now in HomeKit, and the

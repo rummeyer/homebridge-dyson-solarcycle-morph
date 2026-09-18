@@ -51,6 +51,16 @@ export class MorphAccessory {
       .setCharacteristic(Characteristic.Model, 'Solarcycle Morph')
       .setCharacteristic(Characteristic.SerialNumber, config.serial);
 
+    // Removed in 1.0.0, but a service already on a cached accessory stays there
+    // until it is taken off: not adding it any more is not the same as removing
+    // it, and anyone who had it enabled would keep a sensor reading motion
+    // forever.
+    const staleMotion = this.accessory.getService(Service.MotionSensor);
+    if (staleMotion) {
+      this.accessory.removeService(staleMotion);
+      this.platform.log.info(`Removed the motion sensor from ${config.name}; it never reported anything real`);
+    }
+
     this.lightbulb =
       this.accessory.getService(Service.Lightbulb) ?? this.accessory.addService(Service.Lightbulb, config.name);
     this.lightbulb.setCharacteristic(Characteristic.Name, config.name);

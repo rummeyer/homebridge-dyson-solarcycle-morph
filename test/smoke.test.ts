@@ -57,6 +57,9 @@ class FakeAccessory {
   getServiceById(kind: string, subtype: string) {
     return this.services.find((s) => s.kind === kind && s.subtype === subtype);
   }
+  removeService(service: FakeService) {
+    this.services = this.services.filter((s) => s !== service);
+  }
   addService(kind: string, displayName?: string, subtype?: string) {
     const service = new FakeService(kind, displayName, subtype);
     this.services.push(service);
@@ -252,6 +255,25 @@ test('the preset switches can be turned off', async () => {
   const accessory = registered.registered[0]![0] as FakeAccessory;
   assert.equal(accessory.getServiceById('Switch', 'study'), undefined);
   assert.ok(accessory.getServiceById('Switch', 'daylight'), 'the mode switches are unaffected');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('a motion sensor left on a cached accessory is taken off it', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  const platform = new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
+
+  // An accessory from before 1.0.0, with the sensor HomeKit is still showing.
+  const cached = new FakeAccessory(light.name, `uuid:homebridge-dyson-solarcycle-morph:${light.serial}`);
+  cached.addService('MotionSensor', 'Desk Motion');
+  (platform as unknown as { configureAccessory: (a: unknown) => void }).configureAccessory(cached);
+
+  api.emit('didFinishLaunching');
+  await settle();
+  assert.equal(cached.getService('MotionSensor'), undefined, 'the sensor is gone');
+  assert.ok(cached.getService('Lightbulb'), 'and the lamp is still there');
+  assert.equal(registered.registered.length, 0, 'the cached accessory was reused');
   api.emit('shutdown');
   await settle();
 });
