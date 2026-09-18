@@ -16,8 +16,6 @@ export interface LightConfig {
   ltk?: string;
   /** Dyson account GUID the LTK was issued to. Stored alongside the key. */
   accountId?: string;
-  /** Expose the built-in motion sensor as a separate HomeKit service. */
-  motionSensor?: boolean;
   /**
    * Expose daylight tracking as a switch. On by default: it is the lamp's
    * defining feature and there is no other way to turn it back on from HomeKit

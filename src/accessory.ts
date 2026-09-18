@@ -25,7 +25,6 @@ const RELEASE_MS = 1_000;
  */
 export class MorphAccessory {
   private readonly lightbulb: Service;
-  private readonly motion?: Service;
   private readonly daylight?: Service;
   private readonly autoBrightness?: Service;
   private readonly movement?: Service;
@@ -117,8 +116,8 @@ export class MorphAccessory {
     }
 
     if (config.movementSwitch !== false) {
-      // Not the motion sensor below: that reports what the lamp sees, this
-      // decides whether the lamp acts on it.
+      // Whether the lamp acts on what its sensor sees. Reading the sensor
+      // itself is not possible; see docs/PROTOCOL.md.
       this.movement =
         this.accessory.getServiceById(Service.Switch, 'movement') ??
         this.accessory.addService(Service.Switch, `${config.name} Movement`, 'movement');
@@ -153,19 +152,6 @@ export class MorphAccessory {
           });
         this.presets.set(preset, service);
       }
-    }
-
-    if (config.motionSensor) {
-      this.motion =
-        this.accessory.getService(Service.MotionSensor) ??
-        this.accessory.addService(Service.MotionSensor, `${config.name} Motion`);
-      this.name(this.motion, 'Motion');
-      this.motion
-        .getCharacteristic(Characteristic.MotionDetected)
-        .onGet(() => this.live(() => this.motion?.getCharacteristic(Characteristic.MotionDetected).value ?? false));
-      this.lamp.on('motion', (detected) => {
-        this.motion?.updateCharacteristic(Characteristic.MotionDetected, detected);
-      });
     }
 
     this.lamp.on('state', (state) => {
@@ -243,7 +229,6 @@ export class MorphAccessory {
     for (const characteristic of [Characteristic.On, Characteristic.Brightness, Characteristic.ColorTemperature]) {
       this.lightbulb.updateCharacteristic(characteristic, error);
     }
-    this.motion?.updateCharacteristic(Characteristic.MotionDetected, error);
     this.daylight?.updateCharacteristic(Characteristic.On, error);
     this.autoBrightness?.updateCharacteristic(Characteristic.On, error);
     this.movement?.updateCharacteristic(Characteristic.On, error);

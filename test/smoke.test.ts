@@ -144,7 +144,6 @@ test('a configured light produces a lightbulb accessory with working handlers', 
 
   const bulb = accessory.getService('Lightbulb');
   assert.ok(bulb, 'a Lightbulb service exists');
-  assert.ok(!accessory.getService('MotionSensor'), 'no motion sensor unless configured');
 
   // An unreachable lamp must report itself as such rather than serving the last
   // value it happened to know, which HomeKit would show as current.
@@ -167,17 +166,6 @@ test('a configured light produces a lightbulb accessory with working handlers', 
     /HapStatusError -70402/,
   );
 
-  api.emit('shutdown');
-  await settle();
-});
-
-test('the motion sensor is added only when enabled', async () => {
-  const { MorphPlatform } = await load('dist/platform.js');
-  const { api, registered } = fakeApi();
-  new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, motionSensor: true }] }, api);
-  api.emit('didFinishLaunching');
-  await settle();
-  assert.ok((registered.registered[0]![0] as FakeAccessory).getService('MotionSensor'));
   api.emit('shutdown');
   await settle();
 });

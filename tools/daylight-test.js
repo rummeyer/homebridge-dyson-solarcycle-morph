@@ -158,6 +158,7 @@ class Session {
       '2dd11000-1c37-452d-8979-d1b4a787d0a4',
       '2dd11004-1c37-452d-8979-d1b4a787d0a4',
       '2dd11006-1c37-452d-8979-d1b4a787d0a4',
+      '2dd11008-1c37-452d-8979-d1b4a787d0a4',
       '2dd11007-1c37-452d-8979-d1b4a787d0a4',
     ]);
     for (const serviceUuid of await gatt.services()) {

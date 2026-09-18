@@ -38,7 +38,7 @@ characteristic UUID, which is unique on its own.
 | `2dd11005-…` | read, write-without-response, notify | uint8 | Power: 0 = off, 1 = on |
 | `2dd11006-…` | read, write-without-response, notify | uint8 | Auto brightness: 0 = off, 1 = on |
 | `2dd11007-…` | read, write-without-response, notify | uint8 | Movement mode: 0 = off, 1 = on |
-| `2dd11008-…` | read, notify | bytes | Motion: any non-zero byte = detected |
+| `2dd11008-…` | read, notify | 8 bytes | Read `20 00 00 00 00 00 00 00` on a CF06 and never seen to change; **not motion**, whatever the older notes say |
 | `2dd11009-…` | read, write-without-response, notify | uint16 LE | Brightness 100–1000 lm (CD06/CF06) |
 
 The published notes say brightness, colour temperature and daylight-mode writes
@@ -403,6 +403,12 @@ before eight-trial arms separated them.
   something in the app and reading the table again is the cheap way in.
 - **`2dd11004`.** Read-only, two bytes, `42 00`, unchanged across a day of
   poking. A revision or a capability word would both fit.
+- **Where motion is reported, if anywhere.** `2dd11008` is named as motion in
+  the published notes, and this client exposed it as a HomeKit sensor on that
+  basis. It is not: it held `20 00 00 00 00 00 00 00` throughout the lamp being
+  on, being off, and movement mode being switched both ways, notifying only once
+  at subscribe. The app never reads it either. The sensor was removed rather
+  than left reporting motion permanently.
 - **`2dd11000`'s curve.** Two readings say it is not linear in lumens. A handful
   more across the range would settle what it is.
 

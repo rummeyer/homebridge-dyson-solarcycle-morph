@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set of values and spring back, the way a scene does. Turn them off per light
   with `presetSwitches`.
 
+### Removed
+
+- **The motion sensor.** It reported motion permanently. The characteristic it
+  read holds a constant on this lamp — it never changed across the lamp being
+  on, off, and movement mode being switched either way — so there was nothing
+  behind it, and anything automated on it would have fired forever. The lamp's
+  movement mode, which is what most people want it for, is a switch and works.
+
 ### Fixed
 
 - Every switch showed in the Home app under the accessory's own name, so a lamp

@@ -44,10 +44,6 @@ time.
 | Relax | 2900 K, dim and warm |
 | Precision | 4600 K, full output |
 
-And the lamp's **motion sensor**, as a sensor in its own right, off by default.
-That one reports what the lamp sees; the Movement switch decides whether the
-lamp acts on it.
-
 **It follows the lamp, not just the other way round.** Press a button on the
 base, change something in the MyDyson app, or let the lamp end daylight tracking
 by itself, and the Home app keeps up — usually within a second. A lamp that is
@@ -146,7 +142,6 @@ Everything except the lights is optional.
 | **Lights → Name** | What the lamp is called in the Home app |
 | **Lights → BLE MAC address** | Filled in by the scan |
 | **Lights → Serial number** | Filled in by the scan. Identifies the accessory, so changing it creates a new one |
-| **Lights → Expose the motion sensor** | Adds the lamp's motion detector as a HomeKit sensor. Off by default |
 | **Lights → Expose daylight tracking** | The Daylight switch. On by default |
 | **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
 | **Lights → Expose movement mode** | The Movement switch. On by default |

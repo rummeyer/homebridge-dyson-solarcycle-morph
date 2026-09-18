@@ -45,12 +45,6 @@
               "required": true,
               "description": "Printed on the lamp base and shown in the MyDyson app."
             },
-            "motionSensor": {
-              "title": "Expose the motion sensor",
-              "type": "boolean",
-              "default": false,
-              "description": "Adds the lamp's built-in motion detector as a HomeKit motion sensor."
-            },
             "autoBrightnessSwitch": {
               "title": "Expose auto brightness",
               "type": "boolean",
@@ -61,7 +55,7 @@
               "title": "Expose movement mode",
               "type": "boolean",
               "default": true,
-              "description": "Adds a switch for the lamp's movement mode, where it lights on movement and goes out once the room has been still. Not the same as the motion sensor above, which only reports what the lamp sees."
+              "description": "Adds a switch for the lamp's movement mode, where it lights on movement and goes out once the room has been still."
             },
             "presetSwitches": {
               "title": "Expose the preset modes",
@@ -123,7 +117,6 @@
                 "lights[].name",
                 "lights[].mac",
                 "lights[].serial",
-                "lights[].motionSensor",
                 "lights[].daylightSwitch",
                 "lights[].autoBrightnessSwitch",
                 "lights[].movementSwitch",

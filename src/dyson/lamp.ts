@@ -25,7 +25,6 @@ import {
   CHAR_AUTH,
   CHAR_BRIGHTNESS_LM,
   CHAR_COLOR_TEMP,
-  CHAR_MOTION,
   CHAR_AUTO_BRIGHTNESS,
   CHAR_MOVEMENT,
   CHAR_POWER,
@@ -56,7 +55,6 @@ const WANTED_CHARACTERISTICS = new Set([
   CHAR_BRIGHTNESS_LM,
   CHAR_COLOR_TEMP,
   CHAR_WRITE_ATTR,
-  CHAR_MOTION,
   CHAR_AUTO_BRIGHTNESS,
   CHAR_MOVEMENT,
 ]);
@@ -226,7 +224,6 @@ export declare interface DysonMorphLamp {
   on(event: 'connected', listener: () => void): this;
   on(event: 'disconnected', listener: () => void): this;
   on(event: 'state', listener: (state: LampState) => void): this;
-  on(event: 'motion', listener: (detected: boolean) => void): this;
 }
 
 export class DysonMorphLamp extends EventEmitter {
@@ -588,14 +585,6 @@ export class DysonMorphLamp extends EventEmitter {
     await auth.startNotifications();
 
     await this.authenticate();
-
-    const motion = this.chars[CHAR_MOTION];
-    if (motion) {
-      motion.on('valuechanged', (buffer) => this.emit('motion', buffer.some((b) => b !== 0)));
-      await motion.startNotifications().catch((error) => {
-        this.log.debug(`Motion notifications unavailable: ${describeError(error)}`);
-      });
-    }
 
     await this.stopOurDiscovery();
 
