@@ -32,9 +32,9 @@ characteristic UUID, which is unique on its own.
 | `2dd10011-…` | write-without-response, notify | framed messages | Authentication channel |
 | `2dd10013-…` | read, notify | int8 | RSSI, readable **without** auth |
 | `2dd10021-…` | write-without-response, notify | attribute TLV | Attribute writes (daylight mode) |
-| `2dd11000-…` | read, write-without-response, notify | uint8 | Brightness 0–100 % (lamps without daylight) |
+| `2dd11000-…` | read, write-without-response, notify | uint8 | Brightness as a percentage, but not of the lumen range — see below |
 | `2dd11001-…` | read, write-without-response, notify | uint16 LE | Colour temperature, 2700–6500 K |
-| `2dd11004-…` | read | — | Undocumented, not decoded |
+| `2dd11004-…` | read | 2 bytes | Read `42 00` on a CF06 and never seen to change; not decoded |
 | `2dd11005-…` | read, write-without-response, notify | uint8 | Power: 0 = off, 1 = on |
 | `2dd11006-…` | read, write-without-response, notify | uint8 | Auto brightness: 0 = off, 1 = on |
 | `2dd11007-…` | read, write-without-response, notify | uint8 | Movement mode: 0 = off, 1 = on |
@@ -140,6 +140,14 @@ Two separate things do it, and neither is daylight mode. Auto brightness
 drift of 800 lm to 871 lm over two minutes with daylight mode off — and the lamp
 ramps towards any new value rather than jumping to it. Daylight mode moves
 colour temperature, not brightness.
+
+`2dd11000` reports a percentage, and it is not a percentage of the lumen range
+this client uses. Measured on a CF06: 496 lm read as 73, 900 lm read as 96. A
+straight line through those two gives a negative minimum, so it is not linear in
+lumens; it fits a perceptual curve on which 1000 lm is 100% and 100 lm about
+11%, but two points do not settle a curve. This client writes lumens to
+`2dd11009` and scales linearly for HomeKit, which is its own choice rather than
+the lamp's.
 
 Anything that verifies brightness by reading it back will therefore fight the
 lamp. This client checks only power, which has an unambiguous outcome, and
@@ -271,8 +279,37 @@ HomeKit slider in any case.
 in a few, which is the same problem this client solves with `MIN_WRITE_GAP_MS`.
 Ours is 150 ms, measured; theirs is more conservative.
 
-## Daylight mode
+## The lamp's three modes
 
+Daylight tracking, auto brightness and movement mode are the three switches on
+the lamp's base. They are unrelated to each other and they live in two different
+places, which is worth stating plainly because assuming otherwise cost a day
+here: daylight mode is an *attribute*, the other two are *characteristics*.
+
+| mode | where | what it does |
+| --- | --- | --- |
+| Daylight | attribute `0x2013` on `2dd10021` | moves colour temperature through the day |
+| Auto brightness | characteristic `2dd11006`, 1 byte | trims brightness to hold the room level |
+| Movement | characteristic `2dd11007`, 1 byte | lights on movement, goes out once still |
+
+The two characteristics are the easy ones: read, write and notify, one byte,
+`00` or `01`. Nothing else is needed — no handshake beyond the usual one, no
+framing, no acknowledgement to wait for. `2dd11006` and `2dd11007` appear in
+older notes as "runtime flags" and "ambient sensor", which is what sent this
+project looking for them in the attribute channel for hours.
+
+The app writes them through `he0/u.java`: `y(boolean)` for auto brightness,
+`M(boolean)` for movement, both via `he0/b.java`. Which is which comes from the
+bindings — `fd0/b0.java` calls `cVar.a.y(z)` from the auto-brightness screen,
+`fd0/e1.java` calls `cVar.a.M(z)` from the movement one.
+
+Auto brightness is why brightness drifts with nothing touching it: measured at
+800 lm climbing to 871 lm over two minutes, with daylight mode off and colour
+temperature static.
+
+### Daylight mode in detail
+
+The awkward one of the three, and the only one worth a section of its own.
 Measured on 2026-09-18 against a CF06.
 
 **Writes land while daylight mode is on.** Colour temperature reached its target
@@ -293,7 +330,7 @@ Colour temperature moving when nobody asked for it also gives the mode away,
 since nothing but a write moves it while tracking is off. The client keeps that
 as a fallback for a lamp that does not answer the question. Brightness will not
 do: it drifts on its own even with tracking off, climbing 800 lm to 871 lm over
-two minutes in one measurement, which is the ambient sensor rather than daylight.
+two minutes in one measurement, which is auto brightness rather than daylight.
 
 Leaving daylight mode makes the lamp restore the manual brightness and colour
 temperature it held before, which are not the tracked values on display. With
@@ -331,18 +368,19 @@ before eight-trial arms separated them.
 
 ## Open questions
 
-- `2dd11004-…` is read-only and not decoded.
-- An orphaned BlueZ connection presents as a handshake timeout, not as a failed
-  connect: the next client connects on attempt 1 and then waits out
-  `REAUTH_PAYLOAD_B`. Only an explicit `bluetoothctl disconnect` clears it.
-  Worth ruling out before reading a stuck lamp as the refuse-all state above.
-- `0x201a`: write-only, 64 bytes, and the likely home of a custom light mode's
-  definition. Decoding it would open up the lamp's preset modes, which are the
-  one feature of the app this client has no answer to. Read `he0/u.java`'s `U()`
-  and whatever `a.k()` maps a mode to before starting.
-- What the rest of the attributes in the table mean. Reads are free and cannot
-  disturb anything, so correlating them against changes made in the app is the
-  cheap way in.
+- **The preset modes.** `SYNCHRONISED`, `STUDY`, `RELAX` and `PRECISION`, plus
+  custom ones, are the only feature of the app this client has no answer to.
+  `he0/u.java`'s `U()` activates one by writing `01` to the attribute that names
+  it, and `0x201a` — write-only, 64 bytes — is the obvious candidate for where a
+  custom mode's definition goes. Start by reading `U()` and whatever `a.k()`
+  maps a mode to.
+- **What the rest of the attributes mean.** The table above has what each one
+  held on a CF06. Reads cost nothing and cannot disturb a setting, so changing
+  something in the app and reading the table again is the cheap way in.
+- **`2dd11004`.** Read-only, two bytes, `42 00`, unchanged across a day of
+  poking. A revision or a capability word would both fit.
+- **`2dd11000`'s curve.** Two readings say it is not linear in lumens. A handful
+  more across the range would settle what it is.
 
 A note on method, learned the hard way here: writing a value and asking whether
 the lamp looks right proves nothing when the lamp already held that value. Write
@@ -354,6 +392,13 @@ Settled, and recorded so they are not asked again:
 
 - The lamp's Auto and movement switches are `2dd11006` and `2dd11007`, not
   attributes. Nothing in `0x2000`–`0x2140` touches them.
+- **A lamp that connects and then times out waiting for `REAUTH_PAYLOAD_B` is
+  usually not a lamp problem.** An orphaned BlueZ connection — one left behind
+  by a client that was killed rather than closed — presents exactly that way:
+  the next client "connects" on attempt 1 because the link is already up, then
+  waits out the handshake on a session the lamp considers taken.
+  `bluetoothctl disconnect` clears it. Rule this out before reading it as the
+  refuse-every-connection state, which needs the lamp's power removed instead.
 - Brightness and colour temperature are **not** attributes, in either direction.
   Neither readable nor writable as one. The app writes them to the same
   characteristics this client does — `he0/h.java` sends a two-byte value to

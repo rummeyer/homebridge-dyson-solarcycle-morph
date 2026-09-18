@@ -155,6 +155,8 @@ class Session {
     const gatt = await this.device.gatt();
     const wanted = new Set([
       CHAR_AUTH, CHAR_RSSI, CHAR_WRITE_ATTR, CHAR_COLOR_TEMP, CHAR_POWER, CHAR_BRIGHTNESS_LM,
+      '2dd11000-1c37-452d-8979-d1b4a787d0a4',
+      '2dd11004-1c37-452d-8979-d1b4a787d0a4',
       '2dd11006-1c37-452d-8979-d1b4a787d0a4',
       '2dd11007-1c37-452d-8979-d1b4a787d0a4',
     ]);
