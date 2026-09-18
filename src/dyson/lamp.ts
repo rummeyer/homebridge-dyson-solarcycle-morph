@@ -369,9 +369,10 @@ export class DysonMorphLamp extends EventEmitter {
     this.desired = { ...this.desired, brightness: lumensToPercent(lumens) };
     this.settling.hold('brightness');
     this.patchState({ brightness: lumensToPercent(lumens) });
-    // Not reconciled: the lamp adjusts brightness to track daylight, so a value
-    // that differs from what was asked for is the lamp working, not a command
-    // that went missing.
+    // Not reconciled: the lamp ramps towards a value rather than jumping to it,
+    // and trims the level to suit the room while auto brightness is on, so a
+    // reading that differs from the request is the lamp working rather than a
+    // command that went missing.
     await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
   }
 

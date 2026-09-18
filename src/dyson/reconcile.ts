@@ -2,10 +2,10 @@
  * Decides what to resend when the lamp did not end up where it was asked to.
  *
  * Only power is checked, because it is the only value with an unambiguous
- * outcome. The lamp ramps brightness towards a target and trims it to track
- * daylight, so a reading that differs from the request is usually the lamp
- * working — indistinguishable from a dropped command, and resending would
- * fight it.
+ * outcome. The lamp ramps brightness towards a target, and trims it to suit the
+ * room while auto brightness is on, so a reading that differs from the request
+ * is usually the lamp working — indistinguishable from a dropped command, and
+ * resending would fight it.
  *
  * Kept apart from the BLE session because being wrong here has physical
  * consequences: an earlier version compared brightness on an off lamp, which

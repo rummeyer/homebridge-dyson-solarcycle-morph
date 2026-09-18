@@ -91,9 +91,9 @@ Home app the same way you paired Homebridge itself.
 ## Everyday use
 
 **Brightness will not always land exactly where you put it.** The lamp ramps
-towards a value rather than jumping, and trims it to track daylight from its
-location and the time of day. Asking for 100% and seeing 88% is the lamp working
-as designed.
+towards a value rather than jumping to it, and with auto brightness on it keeps
+trimming the level to suit the room. Asking for 100% and seeing 88% is the lamp
+working as designed. The Auto Brightness switch turns the trimming off.
 
 **Changes made at the lamp show up in the Home app**, usually at once and at
 worst within a minute.
@@ -180,17 +180,22 @@ succeeds roughly two times in three, whatever you do, so the plugin simply tries
 several times in quick succession. Only a cycle that never succeeds is worth
 looking at.
 
-**The lamp's three modes appear as switches.** Auto brightness, where the lamp
-trims its own output to keep the room level, and movement mode, where it lights
-on movement and goes out once the room has been still, sit alongside the
-daylight one. All three show what the lamp is actually doing and follow the
-buttons on its base. Turn any of them off per light.
+**The lamp's three modes appear as switches**, alongside the light itself:
 
-**Daylight tracking appears as its own switch.** It shows what the lamp is
-actually doing, following the button on the lamp's base and the MyDyson app as
-well as HomeKit. Setting a colour temperature ends the tracking — that is the
-lamp's own behaviour, not the plugin's — so the switch turns itself off when you
-do. Turn it off per light with `daylightSwitch` if you would rather not have it.
+| switch | what it does | turn it off with |
+| --- | --- | --- |
+| Daylight | shifts colour temperature through the day | `daylightSwitch` |
+| Auto Brightness | trims the level to suit the room | `autoBrightnessSwitch` |
+| Movement | lights on movement, goes out once the room is still | `movementSwitch` |
+
+All three show what the lamp is actually doing, and follow the buttons on its
+base and the MyDyson app as well as HomeKit. Daylight has one behaviour worth
+knowing: setting a colour temperature ends the tracking, so its switch turns
+itself off when you do. That is the lamp's own doing, not the plugin's.
+
+The lamp also has a motion sensor, which is a different thing from the Movement
+switch: the sensor reports what the lamp sees, the switch decides whether the
+lamp acts on it. It is off by default — `motionSensor` adds it.
 
 **Setup without the Homebridge UI.** `dyson-morph-pair` does the same pairing
 from a terminal. See [CONTRIBUTING.md](CONTRIBUTING.md).

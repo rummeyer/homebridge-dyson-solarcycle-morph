@@ -131,10 +131,15 @@ well-known constant that the endpoint accepts in place of a session code).
 
 ## Brightness is not a setpoint
 
-The lamp adjusts its own brightness to track daylight, using its configured
-location and the time of day: ask for 100% and it may settle at 88%. That is the
-lamp working as intended, and it is indistinguishable from a command that was
-dropped in transit.
+The lamp moves brightness by itself: ask for 100% and it may settle at 88%. That
+is the lamp working as intended, and it is indistinguishable from a command that
+was dropped in transit.
+
+Two separate things do it, and neither is daylight mode. Auto brightness
+(`2dd11006`) trims the output to hold the room at a steady level — measured
+drift of 800 lm to 871 lm over two minutes with daylight mode off — and the lamp
+ramps towards any new value rather than jumping to it. Daylight mode moves
+colour temperature, not brightness.
 
 Anything that verifies brightness by reading it back will therefore fight the
 lamp. This client checks only power, which has an unambiguous outcome, and
