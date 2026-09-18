@@ -15,17 +15,36 @@
 
 ## What you get
 
-Your lamp appears in the Home app as a **light**, with the controls Apple provides for one:
+Your lamp appears in the Home app as a **light**, with the controls Apple
+provides for one:
 
 - **On and off**
 - **Brightness**
 - **Colour temperature**, across the lamp's full 2700–6500 K range
-- **Motion**, from the lamp's own sensor, as a separate sensor you can automate on
 - **Siri**: *"Hey Siri, turn on the desk light"*, *"Hey Siri, set the desk light to 50%"*
 
-After setup nothing leaves your home. The lamp has no Wi-Fi at all: the plugin
-talks to it over Bluetooth, and the one cloud request — fetching the lamp's key —
-happens once, during pairing.
+Alongside it, the three modes that otherwise live only on the lamp's base or in
+the MyDyson app — each a switch you can automate on, and each showing what the
+lamp is really doing rather than what was last asked of it:
+
+| switch | what it does |
+| --- | --- |
+| **Daylight** | shifts colour temperature through the day, warm in the evening and cool at midday |
+| **Auto Brightness** | trims the level to suit the room as the light around it changes |
+| **Movement** | lights when it sees movement, goes out once the room has been still |
+
+And the lamp's **motion sensor**, as a sensor in its own right, off by default.
+That one reports what the lamp sees; the Movement switch decides whether the
+lamp acts on it.
+
+**It follows the lamp, not just the other way round.** Press a button on the
+base, change something in the MyDyson app, or let the lamp end daylight tracking
+by itself, and the Home app keeps up — usually within a second. A lamp that is
+out of range says so, rather than showing you the last thing it knew.
+
+**After setup nothing leaves your home.** The lamp has no Wi-Fi at all: the
+plugin talks to it over Bluetooth, and the one cloud request — fetching the
+lamp's key — happens once, during pairing.
 
 ## Before you start
 
@@ -118,7 +137,10 @@ Everything except the lights is optional.
 | **Lights → Name** | What the lamp is called in the Home app |
 | **Lights → BLE MAC address** | Filled in by the scan |
 | **Lights → Serial number** | Filled in by the scan. Identifies the accessory, so changing it creates a new one |
-| **Lights → Expose the motion sensor** | Adds the lamp's motion detector as a HomeKit sensor |
+| **Lights → Expose the motion sensor** | Adds the lamp's motion detector as a HomeKit sensor. Off by default |
+| **Lights → Expose daylight tracking** | The Daylight switch. On by default |
+| **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
+| **Lights → Expose movement mode** | The Movement switch. On by default |
 | **Bluetooth adapter** | Only needed if the host has more than one, e.g. `hci1` |
 
 ## If something goes wrong
@@ -180,22 +202,14 @@ succeeds roughly two times in three, whatever you do, so the plugin simply tries
 several times in quick succession. Only a cycle that never succeeds is worth
 looking at.
 
-**The lamp's three modes appear as switches**, alongside the light itself:
+**Setting a colour temperature ends daylight tracking.** The Daylight switch
+turns itself off when you do, because that is what the lamp does — it leaves the
+mode the moment a colour temperature is set by hand, whether from HomeKit, the
+app or its own buttons. Turn the switch back on to resume tracking.
 
-| switch | what it does | turn it off with |
-| --- | --- | --- |
-| Daylight | shifts colour temperature through the day | `daylightSwitch` |
-| Auto Brightness | trims the level to suit the room | `autoBrightnessSwitch` |
-| Movement | lights on movement, goes out once the room is still | `movementSwitch` |
-
-All three show what the lamp is actually doing, and follow the buttons on its
-base and the MyDyson app as well as HomeKit. Daylight has one behaviour worth
-knowing: setting a colour temperature ends the tracking, so its switch turns
-itself off when you do. That is the lamp's own doing, not the plugin's.
-
-The lamp also has a motion sensor, which is a different thing from the Movement
-switch: the sensor reports what the lamp sees, the switch decides whether the
-lamp acts on it. It is off by default — `motionSensor` adds it.
+**Any of the switches can be left out**, per light: `daylightSwitch`,
+`autoBrightnessSwitch` and `movementSwitch`. The motion sensor is the other way
+round — off unless `motionSensor` turns it on.
 
 **Setup without the Homebridge UI.** `dyson-morph-pair` does the same pairing
 from a terminal. See [CONTRIBUTING.md](CONTRIBUTING.md).
