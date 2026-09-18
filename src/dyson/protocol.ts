@@ -61,6 +61,10 @@ export const MsgType = {
   USER_CONFIRMED: 0x0d,
   /** ← lamp: authentication complete */
   CONNECTION_ESTABLISHED: 0x26,
+  /** → lamp: ask for an attribute's value, on {@link CHAR_WRITE_ATTR} */
+  ATTRIBUTE_GET: 0x90,
+  /** ← lamp: the value asked for */
+  ATTRIBUTE_VALUE: 0x91,
   /** → lamp: set an attribute, on {@link CHAR_WRITE_ATTR} */
   ATTRIBUTE_SET: 0x93,
   /** ← lamp: an attribute write was accepted, or was not */
@@ -96,6 +100,32 @@ export function buildAttributeWrite(attribute: number, value: Buffer): Buffer[] 
 /** Switch daylight tracking on or off. */
 export function buildDaylightWrite(on: boolean): Buffer[] {
   return buildAttributeWrite(ATTR_DAYLIGHT, Buffer.from([on ? 0x01 : 0x00]));
+}
+
+/** Ask the lamp whether it is tracking daylight. */
+export function buildDaylightRead(): Buffer[] {
+  const body = Buffer.alloc(2);
+  body.writeUInt16LE(ATTR_DAYLIGHT, 0);
+  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
+}
+
+/**
+ * Read the answer to {@link buildDaylightRead}.
+ *
+ * The reply carries a status byte the report does not, so the two cannot share
+ * a decoder: `attribute(2) || status || length(2) || value`.
+ */
+export function decodeAttributeValue(buffer: Buffer): { daylight: boolean } | undefined {
+  if (buffer.length < 8) {
+    return undefined;
+  }
+  if ((buffer[0]! & 0x80) === 0 || buffer[1] !== MsgType.ATTRIBUTE_VALUE) {
+    return undefined;
+  }
+  if (buffer.readUInt16LE(2) !== ATTR_DAYLIGHT || buffer[4] !== 0x00) {
+    return undefined;
+  }
+  return { daylight: buffer[7] !== 0 };
 }
 
 /**

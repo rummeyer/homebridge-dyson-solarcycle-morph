@@ -28,8 +28,10 @@ import {
   CHAR_POWER,
   CHAR_RSSI,
   CHAR_WRITE_ATTR,
+  buildDaylightRead,
   buildDaylightWrite,
   decodeAttributeReport,
+  decodeAttributeValue,
   DysonMessage,
   MAX_KELVIN,
   MessageAssembler,
@@ -519,6 +521,7 @@ export class DysonMorphLamp extends EventEmitter {
     // "correct" the lamp to a state nobody is asking for any more.
     this.desired = { ...this.state };
     await this.subscribeToState();
+    await this.readDaylight();
     await this.subscribeToSignal();
     this.startPolling();
     const rssi = this.lastRssi;
@@ -723,6 +726,29 @@ export class DysonMorphLamp extends EventEmitter {
     });
   }
 
+  /**
+   * Ask the lamp whether it is tracking daylight.
+   *
+   * The characteristic has no `read` flag, but the attribute channel carries a
+   * request of its own, so the mode does not have to be guessed at. The answer
+   * arrives as a notification and is handled with the change reports.
+   *
+   * Best-effort: a lamp that does not answer leaves the inference in
+   * {@link publishFromLamp} to work it out from the tracking instead.
+   */
+  private async readDaylight(): Promise<void> {
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+    try {
+      for (const fragment of buildDaylightRead()) {
+        await this.write(CHAR_WRITE_ATTR, fragment);
+      }
+    } catch (error) {
+      this.log.debug(`Could not ask for the daylight mode: ${describeError(error)}`);
+    }
+  }
+
   private async refreshState(): Promise<void> {
     this.patchState(await this.readState());
   }
@@ -886,7 +912,7 @@ export class DysonMorphLamp extends EventEmitter {
           // and a report that arrives but says nothing looks exactly like one
           // that never arrived.
           this.log.debug(`Attribute report ${value.toString('hex')}`);
-          const report = decodeAttributeReport(value);
+          const report = decodeAttributeReport(value) ?? decodeAttributeValue(value);
           if (report) {
             this.daylightReported = true;
           }

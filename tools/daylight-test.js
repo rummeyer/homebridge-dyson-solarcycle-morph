@@ -34,7 +34,7 @@ const { deriveAesKey, buildReauthPayloadA, buildReauthPayloadC, parseReauthPaylo
   await import(join(PLUGIN, 'dist/dyson/crypto.js'));
 const {
   CHAR_AUTH, CHAR_RSSI, CHAR_WRITE_ATTR, CHAR_COLOR_TEMP, CHAR_POWER, CHAR_BRIGHTNESS_LM,
-  MsgType, DAYLIGHT_MODE_DISABLE, MessageAssembler, fragmentMessage,
+  MsgType, MessageAssembler, fragmentMessage,
 } = await import(join(PLUGIN, 'dist/dyson/protocol.js'));
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -283,7 +283,7 @@ async function runTrial(session, requested, { manual, only = 'both', gapMs = 0 }
     kelvin: (current.kelvin ?? 0) > 4600 ? 2700 : 6500,
   };
   if (manual) {
-    await session.write(CHAR_WRITE_ATTR, DAYLIGHT_MODE_DISABLE);
+    await session.write(CHAR_WRITE_ATTR, Buffer.from([0x80, 0x93, 0x13, 0x20, 0x01, 0x00, 0x00]));
     await sleep(200);
   }
   const before = current;
@@ -467,6 +467,96 @@ async function main() {
           `(brightness moved ${lumensDrift}lm, colour temperature ${after.kelvin === before.kelvin ? 'unchanged' : 'MOVED'})`,
       );
       session.log(Math.abs(lumensDrift) <= 5 ? '*** INVISIBLE EXIT ***' : '*** still visible ***');
+      return;
+    }
+
+    if (mode === 'attrmap') {
+      // Which attributes carry brightness and colour temperature?
+      //
+      // Without writing a single unknown attribute: the lamp announces every
+      // attribute change on 2dd10021, so moving a value the way this client
+      // already does makes the lamp name the attribute behind it.
+      const seen = [];
+      const attr = session.chars[CHAR_WRITE_ATTR];
+      attr?.on('valuechanged', (buf) => {
+        if (buf.length >= 6 && buf[1] === 0x97) {
+          seen.push({ at: Date.now(), id: buf.readUInt16LE(2), value: hex(buf.subarray(6)) });
+        }
+      });
+      await attr?.startNotifications();
+      await session.watchAll();
+
+      const step = async (label, uuid, value) => {
+        seen.length = 0;
+        const buf = Buffer.alloc(2);
+        buf.writeUInt16LE(value);
+        session.log(`Setting ${label} to ${value} the old way`);
+        await session.write(uuid, buf);
+        await sleep(3_000);
+        const reports = seen.map((r) => `0x${r.id.toString(16)}=${r.value}`).join('  ');
+        session.log(`  ${label} → attributes reported: ${reports || '(none)'}`);
+      };
+
+      // Two values each, so an attribute that merely happened to change once is
+      // not mistaken for the one being driven.
+      await step('brightness', CHAR_BRIGHTNESS_LM, 300);
+      await step('brightness', CHAR_BRIGHTNESS_LM, 800);
+      await step('colour temp', CHAR_COLOR_TEMP, 2700);
+      await step('colour temp', CHAR_COLOR_TEMP, 6000);
+      return;
+    }
+
+    if (mode === 'attrread') {
+      // Read every attribute the app knows about. Type 0x90 asks, and whatever
+      // the lamp answers with is captured raw. Nothing is written, so this
+      // cannot disturb a setting whose meaning we do not know yet.
+      const answers = new Map();
+      const attr = session.chars[CHAR_WRITE_ATTR];
+      attr?.on('valuechanged', (buf) => {
+        if (buf.length >= 4 && buf[0] === 0x80) {
+          answers.set(`${buf[1].toString(16)}:${buf.readUInt16LE(2).toString(16)}`, hex(buf));
+        }
+      });
+      await attr?.startNotifications();
+
+      const state = await session.readState();
+      session.log(`Lamp is at ${state.lumens}lm / ${state.kelvin}K — look for those values below`);
+
+      // Sweep the range rather than only the ids the app's light module names:
+      // reads cannot disturb anything, and the live values have to live
+      // somewhere. Anything matching the lamp's current state is the answer.
+      const ids = [];
+      for (let id = 0x2000; id <= 0x2040; id++) {
+        ids.push(id);
+      }
+      for (const id of ids) {
+        answers.clear();
+        const body = Buffer.alloc(2);
+        body.writeUInt16LE(id);
+        for (const fragment of fragmentMessage(0x90, body)) {
+          await session.write(CHAR_WRITE_ATTR, fragment);
+        }
+        await sleep(250);
+        const got = [...answers.values()];
+        // The value follows attribute(2) and length(2); decode it both ways so
+        // a 2-byte number is readable at a glance.
+        const decoded = got.map((raw) => {
+          const b = Buffer.from(raw.replace(/ /g, ''), 'hex');
+          if (b.length >= 7) {
+            // header, type, attribute(2), status, length(2), value
+            const v = b.subarray(7);
+            return v.length === 2 ? `${v.readUInt16LE(0)}` : v.length === 1 ? `${v[0]}` : hex(v);
+          }
+          return '';
+        }).filter(Boolean);
+        if (got.length === 0) {
+          continue;
+        }
+        const hit = decoded.some(
+          (d) => Math.abs(Number(d) - (state.kelvin ?? -1)) < 40 || Math.abs(Number(d) - (state.lumens ?? -1)) < 25,
+        );
+        session.log(`0x${id.toString(16)}  → ${decoded.join(' ')}${hit ? '   *** MATCHES LAMP STATE ***' : ''}`);
+      }
       return;
     }
 

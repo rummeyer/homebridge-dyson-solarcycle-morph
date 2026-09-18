@@ -7,8 +7,10 @@ import {
   MIN_KELVIN,
   MIN_LUMENS,
   buildAttributeWrite,
+  buildDaylightRead,
   buildDaylightWrite,
   decodeAttributeReport,
+  decodeAttributeValue,
   kelvinToMired,
   lumensToPercent,
   miredToKelvin,
@@ -127,6 +129,41 @@ test('a command is not mistaken for a report', () => {
   }
   // The acknowledgement the lamp sends, which carries no value at all.
   assert.equal(decodeAttributeReport(Buffer.from([0x80, 0x94, 0x13, 0x20, 0x00])), undefined);
+});
+
+test('the lamp can be asked for the daylight mode', () => {
+  assert.deepEqual(buildDaylightRead(), [Buffer.from([0x80, 0x90, 0x13, 0x20])]);
+});
+
+test('the answer to that question is decoded', () => {
+  // Captured from a CF06: header, type, attribute, status, length, value.
+  assert.deepEqual(
+    decodeAttributeValue(Buffer.from([0x80, 0x91, 0x13, 0x20, 0x00, 0x01, 0x00, 0x00])),
+    { daylight: false },
+  );
+  assert.deepEqual(
+    decodeAttributeValue(Buffer.from([0x80, 0x91, 0x13, 0x20, 0x00, 0x01, 0x00, 0x01])),
+    { daylight: true },
+  );
+  // A non-zero status means the lamp refused the question, not that it said no.
+  assert.equal(
+    decodeAttributeValue(Buffer.from([0x80, 0x91, 0x13, 0x20, 0x02, 0x01, 0x00, 0x01])),
+    undefined,
+  );
+  // Another attribute's value must not be read as this one.
+  assert.equal(
+    decodeAttributeValue(Buffer.from([0x80, 0x91, 0x15, 0x20, 0x00, 0x02, 0x00, 0x92, 0x04])),
+    undefined,
+  );
+});
+
+test('a reply and a report are not confused for each other', () => {
+  // They differ by a status byte, so decoding one as the other reads the value
+  // from the wrong offset — and would have the switch showing the opposite.
+  const reply = Buffer.from([0x80, 0x91, 0x13, 0x20, 0x00, 0x01, 0x00, 0x01]);
+  assert.equal(decodeAttributeReport(reply), undefined);
+  const report = Buffer.from([0x80, 0x97, 0x13, 0x20, 0x01, 0x00, 0x01]);
+  assert.equal(decodeAttributeValue(report), undefined);
 });
 
 test('an attribute write carries its length little-endian', () => {
