@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/rummeyer/homebridge-dyson-solarcycle-morph/main/docs/icon.png" width="100" height="100" alt="">
+</p>
+
 <h1 align="center">homebridge-dyson-solarcycle-morph</h1>
 
 <p align="center">
