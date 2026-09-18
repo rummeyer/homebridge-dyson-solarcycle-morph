@@ -64,7 +64,7 @@ const TARGETS = [
 const SETTLE_MS = 2_000;
 
 function usage() {
-  console.error('Usage: node daylight-test.js <watch|trial|attrread|writescan> <MAC> <SERIAL> [options]');
+  console.error('Usage: node daylight-test.js <watch|trial|attrread|writescan|identify> <MAC> <SERIAL> [options]');
   process.exit(1);
 }
 
@@ -396,8 +396,11 @@ async function main() {
       // Sweep the range rather than only the ids the app's light module names:
       // reads cannot disturb anything, and the live values have to live
       // somewhere. Anything matching the lamp's current state is the answer.
+      // Range is settable: `attrread <MAC> <SERIAL> 0x2040 0x2100`.
+      const from = rest[0] ? Number(rest[0]) : 0x2000;
+      const to = rest[1] ? Number(rest[1]) : 0x2040;
       const ids = [];
-      for (let id = 0x2000; id <= 0x2040; id++) {
+      for (let id = from; id <= to; id++) {
         ids.push(id);
       }
       for (const id of ids) {
@@ -407,7 +410,7 @@ async function main() {
         for (const fragment of fragmentMessage(0x90, body)) {
           await session.write(CHAR_WRITE_ATTR, fragment);
         }
-        await sleep(250);
+        await sleep(180);
         const got = [...answers.values()];
         // The value follows attribute(2) and length(2); decode it both ways so
         // a 2-byte number is readable at a glance.
@@ -492,6 +495,152 @@ async function main() {
           session.log(`  !! 0x${id.toString(16)} did not restore: ${restored} (was ${original})`);
         }
       }
+      return;
+    }
+
+    if (mode === 'setattr') {
+      // Write one attribute by hand: `setattr <MAC> <SERIAL> 0x2026 1`.
+      // Reads it first and prints the old value, so it can be put back.
+      const id = Number(rest[0]);
+      const value = Number(rest[1]);
+      const attr = session.chars[CHAR_WRITE_ATTR];
+      attr?.on('valuechanged', (buf) => session.log(`  attr ${hex(buf)}`));
+      await attr?.startNotifications();
+      await session.watchAll();
+
+      const body = Buffer.alloc(2);
+      body.writeUInt16LE(id);
+      for (const f of fragmentMessage(0x90, body)) {
+        await session.write(CHAR_WRITE_ATTR, f);
+      }
+      await sleep(600);
+      session.log(`Writing 0x${id.toString(16)} = ${value}`);
+      const set = Buffer.alloc(4);
+      set.writeUInt16LE(id, 0);
+      set.writeUInt16LE(1, 2);
+      for (const f of fragmentMessage(0x93, Buffer.concat([set, Buffer.from([value])]))) {
+        await session.write(CHAR_WRITE_ATTR, f);
+      }
+      await sleep(5_000);
+      session.log(`State now ${JSON.stringify(await session.readState())}`);
+      return;
+    }
+
+    if (mode === 'monitor') {
+      // Identification without a stopwatch. Reads every attribute in a loop and
+      // says only what changed, so whoever is at the lamp can flip a switch
+      // whenever they like instead of inside a window someone else opened.
+      const ids = [
+        0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2009, 0x200a, 0x200b, 0x200d,
+        0x2013, 0x2014, 0x2015, 0x2017, 0x2018, 0x201b, 0x201c, 0x201d, 0x201e,
+        0x201f, 0x2021, 0x2023, 0x2024, 0x2025, 0x2026, 0x2028, 0x2029, 0x2030,
+        0x2031, 0x2032,
+      ];
+      const attr = session.chars[CHAR_WRITE_ATTR];
+      attr?.on('valuechanged', (buf) => {
+        if (buf.length >= 7 && buf[1] === 0x97) {
+          console.log(`*** LAMP REPORTS 0x${buf.readUInt16LE(2).toString(16)} = ${buf[buf.length - 1]}`);
+        }
+      });
+      await attr?.startNotifications();
+
+      const readOne = async (id) => {
+        let answer;
+        const handler = (buf) => {
+          if (buf.length >= 8 && buf[1] === 0x91 && buf.readUInt16LE(2) === id && buf[4] === 0) {
+            answer = hex(buf.subarray(7));
+          }
+        };
+        attr?.on('valuechanged', handler);
+        const body = Buffer.alloc(2);
+        body.writeUInt16LE(id);
+        for (const f of fragmentMessage(0x90, body)) {
+          await session.write(CHAR_WRITE_ATTR, f);
+        }
+        await sleep(200);
+        attr?.off('valuechanged', handler);
+        return answer;
+      };
+
+      const known = new Map();
+      for (const id of ids) {
+        known.set(id, await readOne(id));
+      }
+      console.log(`\nWatching ${known.size} attributes for ${seconds}s. Flip the switch whenever you like.`);
+      console.log('Anything that changes is printed the moment it is noticed.\n');
+
+      const until = Date.now() + seconds * 1_000;
+      while (Date.now() < until) {
+        for (const id of ids) {
+          const now = await readOne(id);
+          if (now !== undefined && now !== known.get(id)) {
+            console.log(`*** 0x${id.toString(16)}: ${known.get(id)} → ${now}`);
+            known.set(id, now);
+          }
+        }
+      }
+      console.log('\nDone watching.');
+      return;
+    }
+
+    if (mode === 'identify') {
+      // Which attribute is behind a switch on the lamp? Read every boolean
+      // before and after you toggle it, and watch for the lamp announcing the
+      // change as it happens. Reads only — nothing here can alter a setting.
+      // Every attribute that answered a read, not just the booleans: a switch
+      // on the lamp need not be stored as one.
+      const bools = [
+        0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2009, 0x200a, 0x200b, 0x200d,
+        0x2013, 0x2014, 0x2015, 0x2017, 0x2018, 0x201b, 0x201c, 0x201d, 0x201e,
+        0x201f, 0x2021, 0x2023, 0x2024, 0x2025, 0x2026, 0x2028, 0x2029, 0x2030,
+        0x2031, 0x2032,
+      ];
+      const attr = session.chars[CHAR_WRITE_ATTR];
+      attr?.on('valuechanged', (buf) => {
+        if (buf.length >= 7 && buf[1] === 0x97) {
+          session.log(`  *** lamp reports 0x${buf.readUInt16LE(2).toString(16)} = ${buf[buf.length - 1]}`);
+        }
+      });
+      await attr?.startNotifications();
+
+      const readAll = async () => {
+        const out = new Map();
+        for (const id of bools) {
+          let answer;
+          const handler = (buf) => {
+            if (buf.length >= 8 && buf[1] === 0x91 && buf.readUInt16LE(2) === id && buf[4] === 0) {
+              // Whole value, whatever its width — a switch may not be a byte.
+              answer = hex(buf.subarray(7));
+            }
+          };
+          attr?.on('valuechanged', handler);
+          const body = Buffer.alloc(2);
+          body.writeUInt16LE(id);
+          for (const f of fragmentMessage(0x90, body)) {
+            await session.write(CHAR_WRITE_ATTR, f);
+          }
+          await sleep(300);
+          attr?.off('valuechanged', handler);
+          if (answer !== undefined) {
+            out.set(id, answer);
+          }
+        }
+        return out;
+      };
+
+      const before = await readAll();
+      session.log(`Read ${before.size} attributes`);
+      console.log(`\nToggle the switch on the lamp now — ${seconds}s. Any change is printed as it happens.\n`);
+      await sleep(seconds * 1_000);
+
+      const after = await readAll();
+      session.log(`Read ${after.size} attributes again`);
+      const changed = [...after].filter(([k, v]) => before.get(k) !== v);
+      console.log(
+        changed.length
+          ? `\nChanged: ${changed.map(([k, v]) => `0x${k.toString(16)}: ${before.get(k)} → ${v}`).join(', ')}`
+          : '\nNothing changed. Either the switch is not one of these, or it ended where it started.',
+      );
       return;
     }
 

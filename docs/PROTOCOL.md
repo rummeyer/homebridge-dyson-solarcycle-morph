@@ -335,6 +335,18 @@ before eight-trial arms separated them.
   disturb anything, so correlating them against changes made in the app is the
   cheap way in.
 
+**The lamp's "Auto" and movement-sensor switches are not reachable.** Both were
+lit while every attribute from `0x2000` to `0x2140` read zero, and writing the
+attribute the app's auto-brightness screen uses (`0x2026`) does not move the
+lamp's Auto indicator in either direction. Whatever `0x2026` is, it is not that
+switch. Guessing from the decompiled screens cost more than it returned; the way
+to settle it is to capture what the app actually sends, which needs Android's
+HCI snoop log.
+
+A note on method, learned the hard way here: writing a value and asking whether
+the lamp looks right proves nothing when the lamp already held that value. Write
+the *opposite* of what is showing, and see whether it changes.
+
 Settled, and recorded so they are not asked again:
 
 - Brightness and colour temperature are **not** attributes, in either direction.
