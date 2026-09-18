@@ -18,6 +18,12 @@ export interface LightConfig {
   accountId?: string;
   /** Expose the built-in motion sensor as a separate HomeKit service. */
   motionSensor?: boolean;
+  /**
+   * Expose daylight tracking as a switch. On by default: it is the lamp's
+   * defining feature and there is no other way to turn it back on from HomeKit
+   * once setting a colour temperature has ended it.
+   */
+  daylightSwitch?: boolean;
 }
 
 /** A lamp whose credentials are known, from the config or the credential store. */

@@ -55,7 +55,7 @@ const TARGETS = [
 const SETTLE_MS = 2_000;
 
 function usage() {
-  console.error('Usage: node daylight-test.js <watch|hunt|trial> <MAC> <SERIAL> [options]');
+  console.error('Usage: node daylight-test.js <watch|hunt|trial|writetest> <MAC> <SERIAL> [options]');
   process.exit(1);
 }
 
@@ -368,32 +368,159 @@ async function main() {
       return;
     }
 
-    if (mode === 'hunt') {
-      // The disable payload is known; its counterpart is not. Without a way to
-      // put the lamp back into daylight mode, every no-manual trial after the
-      // first is contaminated, so this is worth finding.
+    if (mode === 'writetest') {
+      // Daylight mode is on when this starts, so only the "off" direction can
+      // tell us anything: asking for the state the lamp already holds looks
+      // identical to a write it ignored. Leaving daylight mode snaps colour
+      // temperature to the manual setpoint, so the lamp reports the verdict.
       await session.watchAll();
-      const candidates = [
-        Buffer.from([0x13, 0x20, 0x01, 0x00, 0x01]),
-        Buffer.from([0x13, 0x20, 0x01, 0x01, 0x00]),
-        Buffer.from([0x13, 0x20, 0x01, 0x01, 0x01]),
-        Buffer.from([0x13, 0x20, 0x00, 0x00, 0x01]),
+      const off = [0x13, 0x20, 0x01, 0x00, 0x00];
+      const on = [0x13, 0x20, 0x01, 0x00, 0x01];
+      // 0x97 is the type the lamp reports with, and 0x97 === 0x17 | 0x80 — the
+      // high bit conventionally marking a report rather than a command.
+      const shapes = [
+        ['framed 0x17   ', (b) => Buffer.from([0x80, 0x17, ...b])],
+        ['typed 0x17    ', (b) => Buffer.from([0x17, ...b])],
+        ['framed 0x97 x2', (b) => Buffer.from([0x81, 0x97, ...b])],
+        ['no length     ', (b) => Buffer.from([0x80, 0x17, b[0], b[1], b[4]])],
+        ['attr only     ', (b) => Buffer.from([b[0], b[1], b[4]])],
       ];
-      for (const candidate of candidates) {
-        session.log(`Writing ${hex(candidate)} to the attribute channel`);
-        await session.write(CHAR_WRITE_ATTR, candidate);
+
+      for (const [label, build] of shapes) {
+        const before = await session.readState();
+        const payload = build(off);
+        await session.write(CHAR_WRITE_ATTR, payload);
         await sleep(3_000);
-        session.log(`State now: ${JSON.stringify(await session.readState())}`);
-        const answer = await ask('  Did the lamp go back to tracking daylight? [y/N/q] ');
-        if (answer.toLowerCase().startsWith('y')) {
-          console.log(`\nFound it: ${hex(candidate)} re-enables daylight mode.`);
-          return;
-        }
-        if (answer.toLowerCase().startsWith('q')) {
+        const after = await session.readState();
+        const moved = before.kelvin !== after.kelvin;
+        session.log(`${label}  ${hex(payload).padEnd(23)} ${before.kelvin}K → ${after.kelvin}K  ${moved ? '*** RESPONDED ***' : 'no change'}`);
+        if (moved) {
+          // Found it going one way; confirm the counterpart before believing it.
+          await sleep(2_000);
+          const beforeOn = await session.readState();
+          await session.write(CHAR_WRITE_ATTR, build(on));
+          await sleep(3_000);
+          const afterOn = await session.readState();
+          session.log(`${label}  back on: ${beforeOn.kelvin}K → ${afterOn.kelvin}K  ${beforeOn.kelvin !== afterOn.kelvin ? '*** CONFIRMED ***' : 'did not return'}`);
           return;
         }
       }
-      console.log('\nNone of the candidates re-enabled daylight mode.');
+      console.log('\nNone of these shapes moved the lamp.');
+      return;
+    }
+
+    if (mode === 'exittest') {
+      // Can daylight mode be left by writing colour temperature, rather than by
+      // the attribute channel the lamp ignores? And does writing back the value
+      // it is already at count, which would make it invisible to the user?
+      await session.watchAll();
+      const before = await session.readState();
+      session.log(`Starting at ${before.kelvin}K — writing that same value back`);
+      const same = Buffer.alloc(2);
+      same.writeUInt16LE(before.kelvin);
+      await session.write(CHAR_COLOR_TEMP, same);
+      await sleep(4_000);
+      const after = await session.readState();
+      session.log(
+        `Now ${after.kelvin}K. Watch above for an attribute report: ` +
+          '80971320010000 means the lamp left daylight mode.',
+      );
+      // If writing the same value is ignored, a different one should still work;
+      // that tells us whether the trick needs a visible change to take effect.
+      if (before.kelvin === after.kelvin) {
+        const nudged = Math.abs(before.kelvin - 50);
+        session.log(`Nothing moved. Trying ${nudged}K, a change small enough to be barely visible`);
+        const near = Buffer.alloc(2);
+        near.writeUInt16LE(nudged);
+        await session.write(CHAR_COLOR_TEMP, near);
+        await sleep(4_000);
+        session.log(`Now ${(await session.readState()).kelvin}K`);
+      }
+      return;
+    }
+
+    if (mode === 'exittest2') {
+      // Leaving daylight mode makes the lamp restore its manual setpoints, so
+      // the exit is only invisible if those setpoints already match what is
+      // showing. Brightness is written first because it lands without ending
+      // the mode; colour temperature is what ends it.
+      await session.watchAll();
+      const before = await session.readState();
+      session.log(`Starting at ${before.lumens}lm / ${before.kelvin}K, daylight on`);
+
+      const lm = Buffer.alloc(2);
+      lm.writeUInt16LE(before.lumens);
+      await session.write(CHAR_BRIGHTNESS_LM, lm);
+      await sleep(1_500);
+      const mid = await session.readState();
+      session.log(`After pinning brightness: ${mid.lumens}lm / ${mid.kelvin}K (expect no attribute report yet)`);
+
+      const k = Buffer.alloc(2);
+      k.writeUInt16LE(before.kelvin);
+      await session.write(CHAR_COLOR_TEMP, k);
+      await sleep(4_000);
+      const after = await session.readState();
+
+      const lumensDrift = (after.lumens ?? 0) - (before.lumens ?? 0);
+      session.log(
+        `After the exit: ${after.lumens}lm / ${after.kelvin}K  ` +
+          `(brightness moved ${lumensDrift}lm, colour temperature ${after.kelvin === before.kelvin ? 'unchanged' : 'MOVED'})`,
+      );
+      session.log(Math.abs(lumensDrift) <= 5 ? '*** INVISIBLE EXIT ***' : '*** still visible ***');
+      return;
+    }
+
+    if (mode === 'hunt') {
+      // Find a command that turns daylight mode back on. The lamp reports the
+      // mode but ignores writes to the channel it reports on, so the search is
+      // over channels and message shapes both.
+      //
+      // Self-contained now that leaving the mode is possible: each candidate is
+      // tried from a known-off state, and the lamp's own report is the verdict.
+      await session.watchAll();
+      let lastReport;
+      session.chars[CHAR_WRITE_ATTR]?.on('valuechanged', (buf) => {
+        if (buf.length >= 7 && buf[1] === 0x97) {
+          lastReport = buf[buf.length - 1] !== 0;
+        }
+      });
+
+      // From the MyDyson app (he0/k0.java): the attribute channel carries
+      // type 0x93 for a command, and the lamp answers with 0x97. Payload is
+      // attribute(2) || length(2, little-endian) || value.
+      const candidates = [
+        ['app 0x93 command ', CHAR_WRITE_ATTR, Buffer.from([0x80, 0x93, 0x13, 0x20, 0x01, 0x00, 0x01])],
+      ];
+
+      /** Put the lamp into daylight-off, the state every candidate starts from. */
+      const leaveDaylight = async () => {
+        const now = await session.readState();
+        const lm = Buffer.alloc(2);
+        lm.writeUInt16LE(now.lumens);
+        await session.write(CHAR_BRIGHTNESS_LM, lm);
+        await sleep(300);
+        const k = Buffer.alloc(2);
+        k.writeUInt16LE(now.kelvin);
+        await session.write(CHAR_COLOR_TEMP, k);
+        await sleep(1_500);
+      };
+
+      for (const [label, uuid, payload] of candidates) {
+        await leaveDaylight();
+        lastReport = undefined;
+        const before = await session.readState();
+        await session.write(uuid, payload);
+        await sleep(3_500);
+        const after = await session.readState();
+        const moved = before.kelvin !== after.kelvin;
+        const verdict = lastReport === true ? '*** REPORTED ON ***' : moved ? 'kelvin moved' : 'nothing';
+        session.log(`${label}  ${hex(payload).padEnd(23)} ${before.kelvin}K → ${after.kelvin}K  ${verdict}`);
+        if (lastReport === true) {
+          console.log(`\nFound it: write ${hex(payload)} to ${uuid}`);
+          return;
+        }
+      }
+      console.log('\nNone of these turned daylight mode on.');
       return;
     }
 

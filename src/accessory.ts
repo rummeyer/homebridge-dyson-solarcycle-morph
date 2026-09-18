@@ -17,6 +17,7 @@ import type { MorphPlatform } from './platform.js';
 export class MorphAccessory {
   private readonly lightbulb: Service;
   private readonly motion?: Service;
+  private readonly daylight?: Service;
   private readonly lamp: DysonMorphLamp;
 
   constructor(
@@ -68,7 +69,25 @@ export class MorphAccessory {
       this.lightbulb.updateCharacteristic(Characteristic.On, state.on);
       this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
       this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
+      this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
     });
+
+    if (config.daylightSwitch !== false) {
+      // A switch rather than a characteristic on the lightbulb: HomeKit renders
+      // only the characteristics it knows, so a custom one would be invisible in
+      // the Home app and reachable only from third-party clients.
+      this.daylight =
+        this.accessory.getService(Service.Switch) ??
+        this.accessory.addService(Service.Switch, `${config.name} Daylight`, 'daylight');
+      this.daylight.setCharacteristic(Characteristic.Name, `${config.name} Daylight`);
+      this.daylight
+        .getCharacteristic(Characteristic.On)
+        .onGet(() => this.live(() => this.lamp.getState().daylight))
+        // Reports the mode faithfully but cannot change it; see setDaylight.
+        // The rejection is what makes the Home app put the switch back rather
+        // than leave it showing a state the lamp is not in.
+        .onSet((value) => this.handleSet('daylight mode', () => this.lamp.setDaylight(value as boolean)));
+    }
 
     if (config.motionSensor) {
       this.motion =
@@ -86,6 +105,9 @@ export class MorphAccessory {
       this.lightbulb.updateCharacteristic(Characteristic.On, state.on);
       this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
       this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
+      // Follows the lamp leaving daylight mode on its own, which it does as soon
+      // as colour temperature is set by hand.
+      this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
     });
   }
 
@@ -126,6 +148,7 @@ export class MorphAccessory {
       this.lightbulb.updateCharacteristic(characteristic, error);
     }
     this.motion?.updateCharacteristic(Characteristic.MotionDetected, error);
+    this.daylight?.updateCharacteristic(Characteristic.On, error);
   }
 
   /**

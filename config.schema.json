@@ -50,6 +50,12 @@
               "type": "boolean",
               "default": false,
               "description": "Adds the lamp's built-in motion detector as a HomeKit motion sensor."
+            },
+            "daylightSwitch": {
+              "title": "Expose daylight tracking",
+              "type": "boolean",
+              "default": true,
+              "description": "Adds a switch for the lamp's daylight tracking, which adjusts colour temperature to the time of day. It reports the true state, following the button on the lamp base and the MyDyson app, and setting a colour temperature by hand ends the tracking as the lamp itself decides."
             }
           }
         }
@@ -99,7 +105,8 @@
                 "lights[].name",
                 "lights[].mac",
                 "lights[].serial",
-                "lights[].motionSensor"
+                "lights[].motionSensor",
+                "lights[].daylightSwitch"
               ]
             }
           ]

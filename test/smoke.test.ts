@@ -172,6 +172,30 @@ test('the motion sensor is added only when enabled', async () => {
   await settle();
 });
 
+test('the daylight switch is there unless it is turned off', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  // On by default: without it there is no way back into daylight tracking from
+  // HomeKit once a colour temperature has been set.
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+  assert.ok((registered.registered[0]![0] as FakeAccessory).getService('Switch'));
+  api.emit('shutdown');
+  await settle();
+});
+
+test('the daylight switch can be turned off', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, daylightSwitch: false }] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+  assert.equal((registered.registered[0]![0] as FakeAccessory).getService('Switch'), undefined);
+  api.emit('shutdown');
+  await settle();
+});
+
 test('an invalid light is skipped instead of crashing the bridge', async () => {
   const { MorphPlatform } = await load('dist/platform.js');
   const { api, registered } = fakeApi();

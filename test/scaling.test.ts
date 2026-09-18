@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
-  kelvinToMired,
-  lumensToPercent,
   MAX_KELVIN,
   MAX_LUMENS,
-  miredToKelvin,
   MIN_KELVIN,
   MIN_LUMENS,
+  buildAttributeWrite,
+  buildDaylightWrite,
+  decodeAttributeReport,
+  kelvinToMired,
+  lumensToPercent,
+  miredToKelvin,
   percentToLumens,
 } from '../src/dyson/protocol.ts';
 import { validateLightConfig } from '../src/config.ts';
@@ -89,4 +92,55 @@ test('supplying only one credential is rejected', () => {
 
 test('every missing required field is reported at once', () => {
   assert.equal(validateLightConfig({}, 0).length, 3);
+});
+
+// Daylight mode. The bytes here were captured from a CF06 on 2026-09-18 — what
+// the lamp sent when the button on its base was pressed, and what it accepted
+// as a command — rather than constructed to match the implementation.
+
+test('a daylight-mode report is decoded in both directions', () => {
+  assert.deepEqual(
+    decodeAttributeReport(Buffer.from([0x80, 0x97, 0x13, 0x20, 0x01, 0x00, 0x01])),
+    { daylight: true },
+  );
+  assert.deepEqual(
+    decodeAttributeReport(Buffer.from([0x80, 0x97, 0x13, 0x20, 0x01, 0x00, 0x00])),
+    { daylight: false },
+  );
+});
+
+test('the daylight command is the one the lamp accepted', () => {
+  // Verified against the hardware: this exact write turned tracking back on.
+  assert.deepEqual(buildDaylightWrite(true), [
+    Buffer.from([0x80, 0x93, 0x13, 0x20, 0x01, 0x00, 0x01]),
+  ]);
+  assert.deepEqual(buildDaylightWrite(false), [
+    Buffer.from([0x80, 0x93, 0x13, 0x20, 0x01, 0x00, 0x00]),
+  ]);
+});
+
+test('a command is not mistaken for a report', () => {
+  // 0x93 commands, 0x94 acknowledges, 0x97 reports. Reading our own command
+  // back as state would make the switch believe every write succeeded.
+  for (const frame of buildDaylightWrite(true)) {
+    assert.equal(decodeAttributeReport(frame), undefined);
+  }
+  // The acknowledgement the lamp sends, which carries no value at all.
+  assert.equal(decodeAttributeReport(Buffer.from([0x80, 0x94, 0x13, 0x20, 0x00])), undefined);
+});
+
+test('an attribute write carries its length little-endian', () => {
+  assert.deepEqual(buildAttributeWrite(0x2013, Buffer.from([0xaa, 0xbb])), [
+    Buffer.from([0x80, 0x93, 0x13, 0x20, 0x02, 0x00, 0xaa, 0xbb]),
+  ]);
+});
+
+test('anything that is not a daylight report is ignored', () => {
+  // Other attributes exist on this channel and must not be read as daylight.
+  assert.equal(decodeAttributeReport(Buffer.from([0x80, 0x97, 0x99, 0x20, 0x01, 0x00, 0x01])), undefined);
+  // A continuation fragment, not the start of a message.
+  assert.equal(decodeAttributeReport(Buffer.from([0x01, 0x97, 0x13, 0x20, 0x01, 0x00, 0x01])), undefined);
+  // Truncated, and empty.
+  assert.equal(decodeAttributeReport(Buffer.from([0x80, 0x97, 0x13, 0x20])), undefined);
+  assert.equal(decodeAttributeReport(Buffer.alloc(0)), undefined);
 });

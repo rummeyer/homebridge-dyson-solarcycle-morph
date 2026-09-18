@@ -140,37 +140,75 @@ Anything that verifies brightness by reading it back will therefore fight the
 lamp. This client checks only power, which has an unambiguous outcome, and
 treats brightness and colour temperature as fire-and-forget.
 
+## The attribute channel
+
+`2dd10021-…` is a small protocol of its own, and the only part of this lamp that
+acknowledges a write. Three message types, carrying the standard fragment
+framing (`0x80` header, then the type):
+
+| type | direction | meaning |
+| --- | --- | --- |
+| `0x93` | → lamp | set an attribute |
+| `0x94` | ← lamp | write accepted (`attribute(2) || status`, `00` is success) |
+| `0x97` | ← lamp | an attribute changed |
+
+The body is `attribute(2) || length(2) || value`, all little-endian. Daylight
+mode is attribute `0x2013`, one byte, so turning it on is
+`80 93 13 20 01 00 01` and off is the same with a trailing `00`.
+
+Earlier notes here gave `13 20 01 00 00` as the thing to write for daylight mode.
+That is the body with its type stripped — a `0x97` report, recorded as though it
+were a command. Written bare the lamp ignores it, silently, which is how it came
+to be believed to work: setting brightness or colour temperature by hand ends
+daylight mode by itself, so the write appeared to do something it never did.
+
+**The MyDyson app uses nothing else.** `2dd11001`, `2dd11005` and `2dd11009` do
+not appear anywhere in it; every control goes through this channel. The direct
+characteristics this client writes to are real and they work, but they are
+write-without-response, which is why a dropped command here is invisible and why
+reconciliation exists at all.
+
+### Attributes
+
+From the app's own table (`vc0/a.java`) and the calls that use them, with the
+value shape each one takes. Only daylight mode is decoded with confidence; the
+rest are listed as a map for later.
+
+| attribute | shape | known as |
+| --- | --- | --- |
+| `0x2013` | 1 byte, bool | daylight tracking |
+| `0x2006` `0x2014` `0x2015` `0x2017` `0x2018` `0x2023` `0x2024` | 2 bytes | numeric; brightness and colour temperature are among these |
+| `0x2009` `0x200a` `0x200b` `0x201b` `0x201c` `0x2026` `0x2029` `0x2032` | 1 byte, bool | — |
+| `0x2028` | 4 bytes | — |
+| `0x201a` | 64 bytes | — |
+
+The app also carries light presets (`SYNCHRONISED`, `STUDY`, `RELAX`,
+`PRECISION`), each its own attribute, each written as a 1-byte `01`.
+
 ## Daylight mode
 
-Measured on 2026-09-18 against a CF06, and it works the other way round from
-what the earlier notes assumed.
+Measured on 2026-09-18 against a CF06.
 
 **Writes land while daylight mode is on.** Colour temperature reached its target
-in 8 of 8 trials with daylight mode active and no daylight-off write sent first,
-and brightness lands the same way. Nothing has to be disabled beforehand.
+in 8 of 8 trials with daylight mode active and nothing sent beforehand, and
+brightness behaves the same way. Nothing has to be disabled first.
 
-**The lamp leaves daylight mode by itself** once colour temperature is set
-manually, and says so on `2dd10021-…`. Writing `13 20 01 00 00` therefore
-imitates something the lamp already does rather than enabling anything.
+**Any manual write ends the tracking**, and the lamp announces it. Setting either
+brightness or colour temperature does it, which is the lamp's own rule, not a
+side effect worth relying on — though it does mean daylight mode can be left
+without the attribute channel, by writing back the values already showing.
 
-**The mode is observable.** `2dd10021-…` notifies on every change, in both
-directions, whether the change came from the app, the lamp's own button, or the
-lamp deciding for itself. The notification carries the standard fragment
-framing: `80` header, type `0x97`, then the attribute body.
+**The mode is observable.** `2dd10021-…` reports every change, in both
+directions, whether it came from the app, the lamp's own button, or the lamp
+deciding for itself. It cannot be *read*: there is no `read` flag, so a client
+that connects while tracking is already on has no way to ask. Colour temperature
+moving when nobody asked for it is the tell, and the only one — with daylight
+mode off, nothing but a write moves it.
 
-| payload | meaning |
-| --- | --- |
-| `13 20 01 00 00` | daylight mode off |
-| `13 20 01 00 01` | daylight mode on |
-
-Both are writable and both were observed as notifications, so the mode can be
-read by subscribing and set in either direction — a switch that reports its true
-state is possible, including when someone presses the button on the lamp.
-
-Switching daylight off restores the manual brightness and colour temperature the
-lamp had before; switching it on returns to the tracked values. With it on, the
-tracking is visible as slow drift — colour temperature moved 5280 K to 5296 K
-over two minutes, brightness dithering within about 3 lm.
+Leaving daylight mode makes the lamp restore the manual brightness and colour
+temperature it held before, which are not the tracked values on display. With
+tracking on, the drift is visible: colour temperature moved 5280 K to 5296 K over
+two minutes, brightness dithering within about 3 lm.
 
 ## Writes must be spaced apart
 
@@ -208,5 +246,6 @@ before eight-trial arms separated them.
   connect: the next client connects on attempt 1 and then waits out
   `REAUTH_PAYLOAD_B`. Only an explicit `bluetoothctl disconnect` clears it.
   Worth ruling out before reading a stuck lamp as the refuse-all state above.
-- Other attributes for `2dd10021-…` beyond `0x2013`, and what message type
-  `0x97` means in general, are still unknown.
+- Which attributes carry brightness and colour temperature, among the seven
+  two-byte ones above. Worth settling: the attribute channel acknowledges its
+  writes, and these characteristics do not.

@@ -28,6 +28,8 @@ import {
   CHAR_POWER,
   CHAR_RSSI,
   CHAR_WRITE_ATTR,
+  buildDaylightWrite,
+  decodeAttributeReport,
   DysonMessage,
   MAX_KELVIN,
   MessageAssembler,
@@ -158,6 +160,16 @@ export interface LampState {
   brightness: number;
   /** Colour temperature in Kelvin, 2700-6500. */
   kelvin: number;
+  /**
+   * Whether the lamp is tracking daylight.
+   *
+   * Carried across reconnects rather than reset, because the characteristic
+   * cannot be read: the lamp only reports the mode when it changes. The value
+   * a session starts with is therefore the last one observed, which a
+   * notification corrects as soon as anything moves it. Wrong only if the mode
+   * was changed while nothing was connected.
+   */
+  daylight: boolean;
 }
 
 export interface LampOptions {
@@ -215,6 +227,8 @@ export class DysonMorphLamp extends EventEmitter {
 
   private readonly writes = new Debouncer(WRITE_DEBOUNCE_MS, (task, key) => this.enqueue(task, key));
   private readonly pacer = new Pacer(MIN_WRITE_GAP_MS);
+  /** Whether the lamp has stated the daylight mode, rather than it being inferred. */
+  private daylightReported = false;
   private readonly reconciles = new Debouncer(RECONCILE_DELAY_MS, (task, key) => this.enqueue(task, key));
   private readonly settling = new SettleWindow(SETTLE_MS);
 
@@ -240,7 +254,7 @@ export class DysonMorphLamp extends EventEmitter {
   private rssiMax = 0;
   private rssiReportedAt = 0;
 
-  private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
+  private state: LampState = { on: false, brightness: 100, kelvin: 2700, daylight: false };
 
   /** What the user last asked for. Reconciliation aims at this, not at guesses. */
   private desired: Partial<LampState> = {};
@@ -339,6 +353,29 @@ export class DysonMorphLamp extends EventEmitter {
     // that differs from what was asked for is the lamp working, not a command
     // that went missing.
     await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
+  }
+
+  /**
+   * Turn daylight tracking on or off.
+   *
+   * Goes out on the attribute channel, which is the one part of this lamp that
+   * acknowledges a write. Not reconciled all the same: the lamp announces the
+   * mode itself whenever it changes, from here, from the app, from the button
+   * on its base, or because setting a value by hand ended the tracking, so the
+   * report is a better answer than anything read back would be.
+   */
+  async setDaylight(on: boolean): Promise<void> {
+    this.requireConnection();
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      throw new Error('this lamp does not expose the attribute channel');
+    }
+    this.log.debug(`Daylight mode ${on ? 'on' : 'off'} requested`);
+    this.patchState({ daylight: on });
+    await this.writes.schedule(CHAR_WRITE_ATTR, async () => {
+      for (const fragment of buildDaylightWrite(on)) {
+        await this.write(CHAR_WRITE_ATTR, fragment);
+      }
+    });
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
@@ -474,6 +511,7 @@ export class DysonMorphLamp extends EventEmitter {
 
     this.connected = true;
     this.pacer.reset();
+    this.daylightReported = false;
     this.settling.clear();
     await this.refreshState();
     // The lamp is the authority on where it is. Anything asked for before the
@@ -838,6 +876,23 @@ export class DysonMorphLamp extends EventEmitter {
         },
       ],
       [CHAR_COLOR_TEMP, (value) => (value.length >= 2 ? { kelvin: value.readUInt16LE(0) } : undefined)],
+      // The only source for daylight mode: the characteristic cannot be read,
+      // so the mode is knowable only while subscribed.
+      [
+        CHAR_WRITE_ATTR,
+        (value) => {
+          // Anything the lamp says about the mode outranks what we inferred.
+          // Logged raw: this channel carries attributes that are not decoded,
+          // and a report that arrives but says nothing looks exactly like one
+          // that never arrived.
+          this.log.debug(`Attribute report ${value.toString('hex')}`);
+          const report = decodeAttributeReport(value);
+          if (report) {
+            this.daylightReported = true;
+          }
+          return report;
+        },
+      ],
     ];
 
     for (const [uuid, decode] of sources) {
@@ -955,8 +1010,30 @@ export class DysonMorphLamp extends EventEmitter {
    * A value the user just set must stay where they put it; the steps the lamp
    * takes on its way there are not news, they are the command happening.
    */
+  /**
+   * Take what the lamp reports, and read daylight mode out of it where it can.
+   *
+   * The mode cannot be read, only subscribed to, so a session that starts while
+   * the lamp is already tracking has no way to know until something changes it.
+   * Colour temperature moving when nobody asked for it is the tell: with
+   * daylight mode off, nothing but a write moves it.
+   *
+   * Only ever concludes the mode is on. Stillness proves nothing — the lamp
+   * drifts a few Kelvin a minute and less than that on a plateau — and a report
+   * from the lamp always wins over an inference once one arrives.
+   */
   private publishFromLamp(patch: Partial<LampState>): void {
-    this.patchState(this.settling.filter(patch));
+    const filtered = this.settling.filter(patch);
+    if (
+      !this.daylightReported &&
+      !this.state.daylight &&
+      filtered.kelvin !== undefined &&
+      filtered.kelvin !== this.state.kelvin
+    ) {
+      this.log.debug(`Colour temperature moved to ${filtered.kelvin}K unasked — the lamp is tracking daylight`);
+      filtered.daylight = true;
+    }
+    this.patchState(filtered);
   }
 
   private patchState(patch: Partial<LampState>): void {
@@ -974,7 +1051,10 @@ export class DysonMorphLamp extends EventEmitter {
 }
 
 function describeState(state: LampState): string {
-  return `${state.on ? 'on' : 'off'}, ${state.brightness}%, ${state.kelvin}K`;
+  // Daylight only when it is on: naming it every time would put "no daylight"
+  // on most lines of the log for a mode most lamps spend most of their time out of.
+  const daylight = state.daylight ? ', daylight' : '';
+  return `${state.on ? 'on' : 'off'}, ${state.brightness}%, ${state.kelvin}K${daylight}`;
 }
 
 function sleep(ms: number): Promise<void> {

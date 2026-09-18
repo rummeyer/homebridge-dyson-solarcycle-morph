@@ -61,10 +61,62 @@ export const MsgType = {
   USER_CONFIRMED: 0x0d,
   /** ← lamp: authentication complete */
   CONNECTION_ESTABLISHED: 0x26,
+  /** → lamp: set an attribute, on {@link CHAR_WRITE_ATTR} */
+  ATTRIBUTE_SET: 0x93,
+  /** ← lamp: an attribute write was accepted, or was not */
+  ATTRIBUTE_ACK: 0x94,
+  /** ← lamp: an attribute changed, on {@link CHAR_WRITE_ATTR} */
+  ATTRIBUTE_REPORT: 0x97,
 } as const;
 
-/** Written to {@link CHAR_WRITE_ATTR} to leave daylight mode for manual control. */
-export const DAYLIGHT_MODE_DISABLE = Buffer.from([0x13, 0x20, 0x01, 0x00, 0x00]);
+/**
+ * Daylight mode, attribute `0x2013` on {@link CHAR_WRITE_ATTR}.
+ *
+ * The attribute channel is a small protocol of its own, and the only one on
+ * this lamp whose writes are acknowledged: `0x93` sets a value, the lamp
+ * answers `0x94` with a status byte, and `0x97` announces the value whenever it
+ * changes for any reason. Earlier notes recorded `13 20 01 00 00` as the thing
+ * to write, which is the body without its type — written bare it is ignored,
+ * silently, which is how it came to be believed to work.
+ */
+const ATTR_DAYLIGHT = 0x2013;
+
+/**
+ * Build an attribute write: `attribute(2) || length(2) || value`, framed.
+ *
+ * Both lengths are little-endian, matching every other multi-byte value here.
+ */
+export function buildAttributeWrite(attribute: number, value: Buffer): Buffer[] {
+  const header = Buffer.alloc(4);
+  header.writeUInt16LE(attribute, 0);
+  header.writeUInt16LE(value.length, 2);
+  return fragmentMessage(MsgType.ATTRIBUTE_SET, Buffer.concat([header, value]));
+}
+
+/** Switch daylight tracking on or off. */
+export function buildDaylightWrite(on: boolean): Buffer[] {
+  return buildAttributeWrite(ATTR_DAYLIGHT, Buffer.from([on ? 0x01 : 0x00]));
+}
+
+/**
+ * Read a notification from {@link CHAR_WRITE_ATTR}.
+ *
+ * @returns Whether daylight mode is on, or `undefined` for anything that is not
+ * a daylight-mode report — acknowledgements and other attributes both land here.
+ */
+export function decodeAttributeReport(buffer: Buffer): { daylight: boolean } | undefined {
+  // header, type, attribute id (2), length (2), value (1)
+  if (buffer.length < 7) {
+    return undefined;
+  }
+  if ((buffer[0]! & 0x80) === 0 || buffer[1] !== MsgType.ATTRIBUTE_REPORT) {
+    return undefined;
+  }
+  if (buffer.readUInt16LE(2) !== ATTR_DAYLIGHT) {
+    return undefined;
+  }
+  return { daylight: buffer[buffer.length - 1] !== 0 };
+}
 
 export const MIN_KELVIN = 2700;
 export const MAX_KELVIN = 6500;
