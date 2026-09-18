@@ -68,10 +68,9 @@ fresh advertisement were each tried and each failed while it was in that state.
 The client therefore thins its retries out rather than hammering, and says in
 the log what actually works.
 
-Before writing brightness or colour temperature, write
-`13 20 01 00 00` to `2dd10021-…` to leave daylight mode, then wait ~200 ms.
-There is no way to read the current mode back, so the plugin re-asserts it on a
-TTL (see `MANUAL_MODE_TTL_MS`).
+Brightness and colour temperature can be written straight out; nothing has to be
+sent first. See [Daylight mode](#daylight-mode) for why the earlier notes said
+otherwise.
 
 ## Message framing on the auth channel
 
@@ -141,12 +140,37 @@ Anything that verifies brightness by reading it back will therefore fight the
 lamp. This client checks only power, which has an unambiguous outcome, and
 treats brightness and colour temperature as fire-and-forget.
 
-Writing `13 20 01 00 00` to `2dd10021-…` is documented as leaving daylight mode
-so explicit values are accepted. Whether that also stops the tracking described
-above, and whether brightness writes land without it, is **not established** —
-the mode cannot be read back, so there is nothing to observe. Measurements on
-2026-09-18 did not settle it either: every trial ran with daylight mode already
-off, which is the condition the question is not about.
+## Daylight mode
+
+Measured on 2026-09-18 against a CF06, and it works the other way round from
+what the earlier notes assumed.
+
+**Writes land while daylight mode is on.** Colour temperature reached its target
+in 8 of 8 trials with daylight mode active and no daylight-off write sent first,
+and brightness lands the same way. Nothing has to be disabled beforehand.
+
+**The lamp leaves daylight mode by itself** once colour temperature is set
+manually, and says so on `2dd10021-…`. Writing `13 20 01 00 00` therefore
+imitates something the lamp already does rather than enabling anything.
+
+**The mode is observable.** `2dd10021-…` notifies on every change, in both
+directions, whether the change came from the app, the lamp's own button, or the
+lamp deciding for itself. The notification carries the standard fragment
+framing: `80` header, type `0x97`, then the attribute body.
+
+| payload | meaning |
+| --- | --- |
+| `13 20 01 00 00` | daylight mode off |
+| `13 20 01 00 01` | daylight mode on |
+
+Both are writable and both were observed as notifications, so the mode can be
+read by subscribing and set in either direction — a switch that reports its true
+state is possible, including when someone presses the button on the lamp.
+
+Switching daylight off restores the manual brightness and colour temperature the
+lamp had before; switching it on returns to the tracked values. With it on, the
+tracking is visible as slow drift — colour temperature moved 5280 K to 5296 K
+over two minutes, brightness dithering within about 3 lm.
 
 ## Writes must be spaced apart
 
@@ -180,11 +204,9 @@ before eight-trial arms separated them.
 ## Open questions
 
 - `2dd11004-…`, `2dd11006-…` and `2dd11007-…` are not decoded.
-- Whether `ensureManualMode` is needed at all is still open; it has to be tested
-  with daylight mode actually **on**.
 - An orphaned BlueZ connection presents as a handshake timeout, not as a failed
   connect: the next client connects on attempt 1 and then waits out
   `REAUTH_PAYLOAD_B`. Only an explicit `bluetoothctl disconnect` clears it.
   Worth ruling out before reading a stuck lamp as the refuse-all state above.
-- Daylight mode is write-only; the plugin cannot report whether it is active.
-- Only the `0x2013` attribute is known for `2dd10021-…`.
+- Other attributes for `2dd10021-…` beyond `0x2013`, and what message type
+  `0x97` means in general, are still unknown.

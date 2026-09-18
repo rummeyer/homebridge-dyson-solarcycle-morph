@@ -28,7 +28,6 @@ import {
   CHAR_POWER,
   CHAR_RSSI,
   CHAR_WRITE_ATTR,
-  DAYLIGHT_MODE_DISABLE,
   DysonMessage,
   MAX_KELVIN,
   MessageAssembler,
@@ -86,16 +85,6 @@ const CONNECT_RETRY_MS = 1_500;
 
 /** The lamp can take a while to answer the first handshake message. */
 const HANDSHAKE_TIMEOUT_MS = 30_000;
-
-/**
- * Re-assert manual mode if the last write was longer ago than this. Doing it
- * before every command wastes a write; never doing it means the lamp ignores us
- * after someone used the physical daylight button.
- */
-const MANUAL_MODE_TTL_MS = 60_000;
-
-/** The lamp needs a moment to apply a mode change before the next write. */
-const MODE_SETTLE_MS = 200;
 
 /** Signal strength worth warning about, so a weak link is visible in the log. */
 const WEAK_RSSI_DBM = -80;
@@ -250,7 +239,6 @@ export class DysonMorphLamp extends EventEmitter {
   private rssiMin = 0;
   private rssiMax = 0;
   private rssiReportedAt = 0;
-  private manualModeSetAt = 0;
 
   private state: LampState = { on: false, brightness: 100, kelvin: 2700 };
 
@@ -365,7 +353,6 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   private async writeUint16(uuid: string, value: number): Promise<void> {
-    await this.ensureManualMode();
     const buffer = Buffer.alloc(2);
     buffer.writeUInt16LE(value);
     await this.write(uuid, buffer);
@@ -486,7 +473,6 @@ export class DysonMorphLamp extends EventEmitter {
     await this.stopOurDiscovery();
 
     this.connected = true;
-    this.manualModeSetAt = 0;
     this.pacer.reset();
     this.settling.clear();
     await this.refreshState();
@@ -697,24 +683,6 @@ export class DysonMorphLamp extends EventEmitter {
         resolve(message);
       });
     });
-  }
-
-  /**
-   * Take the lamp out of daylight mode so it accepts explicit values.
-   *
-   * Refreshed on a TTL rather than tracked as state: the lamp offers no way to
-   * read the current mode back, and the physical button can change it.
-   */
-  private async ensureManualMode(): Promise<void> {
-    if (Date.now() - this.manualModeSetAt < MANUAL_MODE_TTL_MS) {
-      return;
-    }
-    if (!this.chars[CHAR_WRITE_ATTR]) {
-      return;
-    }
-    await this.write(CHAR_WRITE_ATTR, DAYLIGHT_MODE_DISABLE);
-    await sleep(MODE_SETTLE_MS);
-    this.manualModeSetAt = Date.now();
   }
 
   private async refreshState(): Promise<void> {
