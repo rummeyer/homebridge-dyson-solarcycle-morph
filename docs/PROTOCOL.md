@@ -36,8 +36,8 @@ characteristic UUID, which is unique on its own.
 | `2dd11001-…` | read, write-without-response, notify | uint16 LE | Colour temperature, 2700–6500 K |
 | `2dd11004-…` | read | — | Undocumented, not decoded |
 | `2dd11005-…` | read, write-without-response, notify | uint8 | Power: 0 = off, 1 = on |
-| `2dd11006-…` | read, write-without-response, notify | — | Runtime / schedule flags, not decoded |
-| `2dd11007-…` | read, write-without-response, notify | — | Ambient sensor, not decoded |
+| `2dd11006-…` | read, write-without-response, notify | uint8 | Auto brightness: 0 = off, 1 = on |
+| `2dd11007-…` | read, write-without-response, notify | uint8 | Movement mode: 0 = off, 1 = on |
 | `2dd11008-…` | read, notify | bytes | Motion: any non-zero byte = detected |
 | `2dd11009-…` | read, write-without-response, notify | uint16 LE | Brightness 100–1000 lm (CD06/CF06) |
 
@@ -168,13 +168,12 @@ were a command. Written bare the lamp ignores it, silently, which is how it came
 to be believed to work: setting brightness or colour temperature by hand ends
 daylight mode by itself, so the write appeared to do something it never did.
 
-`2dd11001`, `2dd11005` and `2dd11009` appear nowhere in the MyDyson app, which
-suggests at first glance that everything ought to go through this channel. It
-does not. Reading every attribute from `0x2000` to `0x2040` on a CF06 found none
-holding the lamp's live brightness or colour temperature — the channel carries
-settings, bounds and flags, while the light's own values live only on those
-characteristics. They are write-without-response, so a dropped command there is
-invisible, and that is why reconciliation and write pacing exist.
+The light's own values do not live here. Reading every attribute from `0x2000`
+to `0x2040` on a CF06 found none holding its brightness or colour temperature:
+this channel carries settings, bounds and flags, while brightness, colour
+temperature and the mode switches are plain characteristics on `2dd1fff0`. Those
+are write-without-response, so a dropped command there is invisible, and that is
+why reconciliation and write pacing exist.
 
 ### Attributes
 
@@ -242,21 +241,26 @@ characteristic, which is how the two channels separate.
 The attribute types this client uses (`0x90`, `0x93`) are not in those lists;
 they are built directly in `he0`, which is why they were not found by guessing.
 
-**The app never mentions `2dd11001`, `2dd11005` or `2dd11009`.** It does not set
-brightness or colour temperature as values at all: `he0/u.java`'s `U()` takes a
-*light mode* — `SYNCHRONISED`, `STUDY`, `RELAX`, `PRECISION`, or a custom one,
-each carrying a colour temperature and a brightness — and activates it by
-writing `01` to the attribute that names it. The values themselves are not in
-any readable attribute, and `0x201a` (write-only, 64 bytes) is the obvious
-candidate for where a custom mode's definition goes. Nothing here was decoded.
+**Searching the app for a UUID string finds nothing**, and that is a trap worth
+knowing about: `d50/g.java` builds them with
+`String.format("2DD1%s-1C37-452D-8979-D1B4A787D0A4", "1006")`, so the full UUIDs
+never appear in the binary. Believing the app did not use `2dd1fff0` at all cost
+a day's worth of wrong turns here. Grep for the four-digit fragment instead.
 
-That path is no use for a HomeKit slider, and the direct characteristics are.
-Two things were measured before concluding that:
+`d50/g.java` is the table for that service: `1000`, `1001`, `1005`, `1006`,
+`1007`, `1009`. The switches on the lamp's base are written straight to it —
+`he0/u.java`'s `y(boolean)` for auto brightness and `M(boolean)` for movement
+mode, both via `he0/b.java`, one byte each. The bindings say which is which:
+`fd0/b0.java` calls `cVar.a.y(z)` from the auto-brightness screen and
+`fd0/e1.java` calls `cVar.a.M(z)` from the movement one.
 
-- Every readable two-byte attribute was written with a changed value and put
-  back. All seven were acknowledged, none moved the light.
-- Every attribute from `0x2000` to `0x2040` was read. None held the lamp's live
-  brightness or colour temperature.
+The app does not set brightness or colour temperature as values, though:
+`he0/u.java`'s `U()` takes a *light mode* — `SYNCHRONISED`, `STUDY`, `RELAX`,
+`PRECISION`, or a custom one, each carrying a colour temperature and a
+brightness — and activates it by writing `01` to the attribute that names it.
+`0x201a` (write-only, 64 bytes) is the obvious candidate for where a custom
+mode's definition goes. Nothing there was decoded, and that path is no use for a
+HomeKit slider in any case.
 
 **The app spaces its writes**, 300 ms between messages in most places and 500 ms
 in a few, which is the same problem this client solves with `MIN_WRITE_GAP_MS`.
@@ -322,7 +326,7 @@ before eight-trial arms separated them.
 
 ## Open questions
 
-- `2dd11004-…`, `2dd11006-…` and `2dd11007-…` are not decoded.
+- `2dd11004-…` is read-only and not decoded.
 - An orphaned BlueZ connection presents as a handshake timeout, not as a failed
   connect: the next client connects on attempt 1 and then waits out
   `REAUTH_PAYLOAD_B`. Only an explicit `bluetoothctl disconnect` clears it.
@@ -335,20 +339,16 @@ before eight-trial arms separated them.
   disturb anything, so correlating them against changes made in the app is the
   cheap way in.
 
-**The lamp's "Auto" and movement-sensor switches are not reachable.** Both were
-lit while every attribute from `0x2000` to `0x2140` read zero, and writing the
-attribute the app's auto-brightness screen uses (`0x2026`) does not move the
-lamp's Auto indicator in either direction. Whatever `0x2026` is, it is not that
-switch. Guessing from the decompiled screens cost more than it returned; the way
-to settle it is to capture what the app actually sends, which needs Android's
-HCI snoop log.
-
 A note on method, learned the hard way here: writing a value and asking whether
 the lamp looks right proves nothing when the lamp already held that value. Write
-the *opposite* of what is showing, and see whether it changes.
+the *opposite* of what is showing, and see whether it changes. The lamp's Auto
+switch was "confirmed" twice on attributes that turned out to have nothing to do
+with it, on exactly that mistake.
 
 Settled, and recorded so they are not asked again:
 
+- The lamp's Auto and movement switches are `2dd11006` and `2dd11007`, not
+  attributes. Nothing in `0x2000`–`0x2140` touches them.
 - Brightness and colour temperature are **not** attributes, in either direction.
   Neither readable nor writable as one; the direct characteristics are the only
   path, so unacknowledged writes, pacing and reconciliation are load-bearing.

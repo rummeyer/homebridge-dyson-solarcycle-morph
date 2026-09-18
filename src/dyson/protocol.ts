@@ -28,6 +28,22 @@ export const CHAR_COLOR_TEMP = '2dd11001-1c37-452d-8979-d1b4a787d0a4';
 export const CHAR_POWER = '2dd11005-1c37-452d-8979-d1b4a787d0a4';
 /** Motion events. Any non-zero byte in the payload means motion. */
 export const CHAR_MOTION = '2dd11008-1c37-452d-8979-d1b4a787d0a4';
+/**
+ * Auto brightness, the lamp's "Auto" button: 1 byte, 0 = off, 1 = on.
+ *
+ * With it on the lamp trims its own output to hold the room at a steady level,
+ * which is what makes brightness drift by a few lumens a minute. Nothing to do
+ * with daylight tracking, which moves colour temperature instead.
+ */
+export const CHAR_AUTO_BRIGHTNESS = '2dd11006-1c37-452d-8979-d1b4a787d0a4';
+/**
+ * Movement mode, the lamp's motion button: 1 byte, 0 = off, 1 = on.
+ *
+ * With it on the lamp lights when it sees movement and goes out when the room
+ * has been still. Separate from {@link CHAR_MOTION}, which only reports what
+ * the sensor sees.
+ */
+export const CHAR_MOVEMENT = '2dd11007-1c37-452d-8979-d1b4a787d0a4';
 /** Brightness in lumens, uint16 LE. Used by CD06/CF06. */
 export const CHAR_BRIGHTNESS_LM = '2dd11009-1c37-452d-8979-d1b4a787d0a4';
 

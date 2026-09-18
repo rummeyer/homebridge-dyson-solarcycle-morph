@@ -25,6 +25,8 @@ import {
   CHAR_BRIGHTNESS_LM,
   CHAR_COLOR_TEMP,
   CHAR_MOTION,
+  CHAR_AUTO_BRIGHTNESS,
+  CHAR_MOVEMENT,
   CHAR_POWER,
   CHAR_RSSI,
   CHAR_WRITE_ATTR,
@@ -51,6 +53,8 @@ const WANTED_CHARACTERISTICS = new Set([
   CHAR_COLOR_TEMP,
   CHAR_WRITE_ATTR,
   CHAR_MOTION,
+  CHAR_AUTO_BRIGHTNESS,
+  CHAR_MOVEMENT,
 ]);
 
 /** Without these there is no point continuing. */
@@ -170,6 +174,15 @@ export interface LampState {
    * starts from the last value seen rather than from a guess.
    */
   daylight: boolean;
+  /**
+   * Whether the lamp is trimming its own brightness to the room — its "Auto".
+   *
+   * Unlike daylight mode this is a plain characteristic: readable, writable and
+   * notified, so it needs none of the asking-and-inferring that one does.
+   */
+  autoBrightness: boolean;
+  /** Whether the lamp lights on movement and goes out when the room is still. */
+  movement: boolean;
 }
 
 export interface LampOptions {
@@ -254,7 +267,14 @@ export class DysonMorphLamp extends EventEmitter {
   private rssiMax = 0;
   private rssiReportedAt = 0;
 
-  private state: LampState = { on: false, brightness: 100, kelvin: 2700, daylight: false };
+  private state: LampState = {
+    on: false,
+    brightness: 100,
+    kelvin: 2700,
+    daylight: false,
+    autoBrightness: false,
+    movement: false,
+  };
 
   /** What the user last asked for. Reconciliation aims at this, not at guesses. */
   private desired: Partial<LampState> = {};
@@ -364,6 +384,38 @@ export class DysonMorphLamp extends EventEmitter {
    * on its base, or because setting a value by hand ended the tracking, so the
    * report is a better answer than anything read back would be.
    */
+  /** Turn the lamp's own brightness trimming on or off. */
+  async setAutoBrightness(on: boolean): Promise<void> {
+    await this.setFlag(CHAR_AUTO_BRIGHTNESS, 'autoBrightness', on, 'Auto brightness');
+  }
+
+  /** Turn movement-triggered lighting on or off. */
+  async setMovement(on: boolean): Promise<void> {
+    await this.setFlag(CHAR_MOVEMENT, 'movement', on, 'Movement mode');
+  }
+
+  /**
+   * Write one of the lamp's one-byte mode flags.
+   *
+   * Set optimistically like every other command here, but unusually well
+   * covered afterwards: these characteristics notify, so the lamp corrects us
+   * within a moment if the write did not land.
+   */
+  private async setFlag(
+    uuid: string,
+    field: 'autoBrightness' | 'movement',
+    on: boolean,
+    label: string,
+  ): Promise<void> {
+    this.requireConnection();
+    if (!this.chars[uuid]) {
+      throw new Error(`this lamp does not expose ${label.toLowerCase()}`);
+    }
+    this.log.debug(`${label} ${on ? 'on' : 'off'} requested`);
+    this.patchState({ [field]: on });
+    await this.writes.schedule(uuid, () => this.write(uuid, Buffer.from([on ? 0x01 : 0x00])));
+  }
+
   async setDaylight(on: boolean): Promise<void> {
     this.requireConnection();
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -765,6 +817,8 @@ export class DysonMorphLamp extends EventEmitter {
     };
 
     const power = await read(CHAR_POWER, 'power');
+    const autoBrightness = await read(CHAR_AUTO_BRIGHTNESS, 'auto brightness');
+    const movement = await read(CHAR_MOVEMENT, 'movement mode');
     if (power?.length) {
       patch.on = power[0] !== 0;
     }
@@ -781,6 +835,12 @@ export class DysonMorphLamp extends EventEmitter {
     const kelvin = await read(CHAR_COLOR_TEMP, 'colour temperature');
     if (kelvin && kelvin.length >= 2) {
       patch.kelvin = kelvin.readUInt16LE(0);
+    }
+    if (autoBrightness?.length) {
+      patch.autoBrightness = autoBrightness[0] !== 0;
+    }
+    if (movement?.length) {
+      patch.movement = movement[0] !== 0;
     }
 
     // Reads failing after a successful handshake means the session was dropped
@@ -900,6 +960,8 @@ export class DysonMorphLamp extends EventEmitter {
         },
       ],
       [CHAR_COLOR_TEMP, (value) => (value.length >= 2 ? { kelvin: value.readUInt16LE(0) } : undefined)],
+      [CHAR_AUTO_BRIGHTNESS, (value) => (value.length ? { autoBrightness: value[0] !== 0 } : undefined)],
+      [CHAR_MOVEMENT, (value) => (value.length ? { movement: value[0] !== 0 } : undefined)],
       // Daylight mode arrives here twice over: the reply to the question asked
       // on connecting, and a report whenever it changes.
       [

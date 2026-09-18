@@ -18,6 +18,8 @@ export class MorphAccessory {
   private readonly lightbulb: Service;
   private readonly motion?: Service;
   private readonly daylight?: Service;
+  private readonly autoBrightness?: Service;
+  private readonly movement?: Service;
   private readonly lamp: DysonMorphLamp;
 
   constructor(
@@ -70,14 +72,18 @@ export class MorphAccessory {
       this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
       this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
       this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
+      this.autoBrightness?.updateCharacteristic(Characteristic.On, state.autoBrightness);
+      this.movement?.updateCharacteristic(Characteristic.On, state.movement);
     });
 
     if (config.daylightSwitch !== false) {
       // A switch rather than a characteristic on the lightbulb: HomeKit renders
       // only the characteristics it knows, so a custom one would be invisible in
       // the Home app and reachable only from third-party clients.
+      // By subtype, not by type: this accessory carries more than one Switch,
+      // and a lookup by type alone would find whichever came first.
       this.daylight =
-        this.accessory.getService(Service.Switch) ??
+        this.accessory.getServiceById(Service.Switch, 'daylight') ??
         this.accessory.addService(Service.Switch, `${config.name} Daylight`, 'daylight');
       this.daylight.setCharacteristic(Characteristic.Name, `${config.name} Daylight`);
       this.daylight
@@ -87,6 +93,30 @@ export class MorphAccessory {
         // The rejection is what makes the Home app put the switch back rather
         // than leave it showing a state the lamp is not in.
         .onSet((value) => this.handleSet('daylight mode', () => this.lamp.setDaylight(value as boolean)));
+    }
+
+    if (config.autoBrightnessSwitch !== false) {
+      this.autoBrightness =
+        this.accessory.getServiceById(Service.Switch, 'auto') ??
+        this.accessory.addService(Service.Switch, `${config.name} Auto Brightness`, 'auto');
+      this.autoBrightness.setCharacteristic(Characteristic.Name, `${config.name} Auto Brightness`);
+      this.autoBrightness
+        .getCharacteristic(Characteristic.On)
+        .onGet(() => this.live(() => this.lamp.getState().autoBrightness))
+        .onSet((value) => this.handleSet('auto brightness', () => this.lamp.setAutoBrightness(value as boolean)));
+    }
+
+    if (config.movementSwitch !== false) {
+      // Not the motion sensor below: that reports what the lamp sees, this
+      // decides whether the lamp acts on it.
+      this.movement =
+        this.accessory.getServiceById(Service.Switch, 'movement') ??
+        this.accessory.addService(Service.Switch, `${config.name} Movement`, 'movement');
+      this.movement.setCharacteristic(Characteristic.Name, `${config.name} Movement`);
+      this.movement
+        .getCharacteristic(Characteristic.On)
+        .onGet(() => this.live(() => this.lamp.getState().movement))
+        .onSet((value) => this.handleSet('movement mode', () => this.lamp.setMovement(value as boolean)));
     }
 
     if (config.motionSensor) {
@@ -108,6 +138,8 @@ export class MorphAccessory {
       // Follows the lamp leaving daylight mode on its own, which it does as soon
       // as colour temperature is set by hand.
       this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
+      this.autoBrightness?.updateCharacteristic(Characteristic.On, state.autoBrightness);
+      this.movement?.updateCharacteristic(Characteristic.On, state.movement);
     });
   }
 
@@ -149,6 +181,8 @@ export class MorphAccessory {
     }
     this.motion?.updateCharacteristic(Characteristic.MotionDetected, error);
     this.daylight?.updateCharacteristic(Characteristic.On, error);
+    this.autoBrightness?.updateCharacteristic(Characteristic.On, error);
+    this.movement?.updateCharacteristic(Characteristic.On, error);
   }
 
   /**

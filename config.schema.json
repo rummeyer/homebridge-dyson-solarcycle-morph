@@ -51,6 +51,18 @@
               "default": false,
               "description": "Adds the lamp's built-in motion detector as a HomeKit motion sensor."
             },
+            "autoBrightnessSwitch": {
+              "title": "Expose auto brightness",
+              "type": "boolean",
+              "default": true,
+              "description": "Adds a switch for the lamp's \"Auto\" setting, which trims brightness to keep the room at a steady level."
+            },
+            "movementSwitch": {
+              "title": "Expose movement mode",
+              "type": "boolean",
+              "default": true,
+              "description": "Adds a switch for the lamp's movement mode, where it lights on movement and goes out once the room has been still. Not the same as the motion sensor above, which only reports what the lamp sees."
+            },
             "daylightSwitch": {
               "title": "Expose daylight tracking",
               "type": "boolean",
@@ -106,7 +118,9 @@
                 "lights[].mac",
                 "lights[].serial",
                 "lights[].motionSensor",
-                "lights[].daylightSwitch"
+                "lights[].daylightSwitch",
+                "lights[].autoBrightnessSwitch",
+                "lights[].movementSwitch"
               ]
             }
           ]

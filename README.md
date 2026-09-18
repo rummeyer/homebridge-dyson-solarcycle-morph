@@ -180,6 +180,12 @@ succeeds roughly two times in three, whatever you do, so the plugin simply tries
 several times in quick succession. Only a cycle that never succeeds is worth
 looking at.
 
+**The lamp's three modes appear as switches.** Auto brightness, where the lamp
+trims its own output to keep the room level, and movement mode, where it lights
+on movement and goes out once the room has been still, sit alongside the
+daylight one. All three show what the lamp is actually doing and follow the
+buttons on its base. Turn any of them off per light.
+
 **Daylight tracking appears as its own switch.** It shows what the lamp is
 actually doing, following the button on the lamp's base and the MyDyson app as
 well as HomeKit. Setting a colour temperature ends the tracking — that is the

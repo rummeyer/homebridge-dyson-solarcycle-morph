@@ -29,7 +29,12 @@ class FakeService {
   characteristics = new Map<string, FakeCharacteristic>();
   kind: string;
   displayName: string | undefined;
-  constructor(kind: string, displayName?: string) { this.kind = kind; this.displayName = displayName; }
+  subtype: string | undefined;
+  constructor(kind: string, displayName?: string, subtype?: string) {
+    this.kind = kind;
+    this.displayName = displayName;
+    this.subtype = subtype;
+  }
   getCharacteristic(name: string): FakeCharacteristic {
     if (!this.characteristics.has(name)) {
       this.characteristics.set(name, new FakeCharacteristic(name));
@@ -47,8 +52,11 @@ class FakeAccessory {
   UUID: string;
   constructor(displayName: string, uuid: string) { this.displayName = displayName; this.UUID = uuid; }
   getService(kind: string) { return this.services.find((s) => s.kind === kind); }
-  addService(kind: string, displayName?: string) {
-    const service = new FakeService(kind, displayName);
+  getServiceById(kind: string, subtype: string) {
+    return this.services.find((s) => s.kind === kind && s.subtype === subtype);
+  }
+  addService(kind: string, displayName?: string, subtype?: string) {
+    const service = new FakeService(kind, displayName, subtype);
     this.services.push(service);
     return service;
   }
@@ -180,7 +188,7 @@ test('the daylight switch is there unless it is turned off', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  assert.ok((registered.registered[0]![0] as FakeAccessory).getService('Switch'));
+  assert.ok((registered.registered[0]![0] as FakeAccessory).getServiceById('Switch', 'daylight'));
   api.emit('shutdown');
   await settle();
 });
@@ -191,7 +199,39 @@ test('the daylight switch can be turned off', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, daylightSwitch: false }] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  assert.equal((registered.registered[0]![0] as FakeAccessory).getService('Switch'), undefined);
+  const accessory = registered.registered[0]![0] as FakeAccessory;
+  assert.equal(accessory.getServiceById('Switch', 'daylight'), undefined);
+  assert.ok(accessory.getServiceById('Switch', 'auto'), 'the other switches are unaffected');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('each mode gets its own switch, and they are distinct', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+  const accessory = registered.registered[0]![0] as FakeAccessory;
+  const subtypes = ['daylight', 'auto', 'movement'].map((t) => accessory.getServiceById('Switch', t));
+  // Three Switch services on one accessory: binding any of them by type alone
+  // would wire several handlers to whichever came first.
+  assert.ok(subtypes.every(Boolean), 'all three switches exist');
+  assert.equal(new Set(subtypes).size, 3, 'and they are three different services');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('the movement switch can be turned off on its own', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, movementSwitch: false }] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+  const accessory = registered.registered[0]![0] as FakeAccessory;
+  assert.equal(accessory.getServiceById('Switch', 'movement'), undefined);
+  assert.ok(accessory.getServiceById('Switch', 'auto'), 'auto brightness is unaffected');
+  assert.ok(accessory.getServiceById('Switch', 'daylight'), 'daylight is unaffected');
   api.emit('shutdown');
   await settle();
 });

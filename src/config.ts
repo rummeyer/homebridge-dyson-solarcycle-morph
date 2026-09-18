@@ -24,6 +24,13 @@ export interface LightConfig {
    * once setting a colour temperature has ended it.
    */
   daylightSwitch?: boolean;
+  /**
+   * Expose the lamp's "Auto" brightness as a switch. On by default: it is a
+   * mode the lamp has and HomeKit would otherwise neither see nor reach.
+   */
+  autoBrightnessSwitch?: boolean;
+  /** Expose movement-triggered lighting as a switch. On by default. */
+  movementSwitch?: boolean;
 }
 
 /** A lamp whose credentials are known, from the config or the credential store. */

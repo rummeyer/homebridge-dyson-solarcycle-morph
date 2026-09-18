@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The lamp's Auto and movement switches reach HomeKit.** Auto brightness, where
+  the lamp trims its own output to keep the room level, and movement mode, where
+  it lights on movement and goes out once the room is still, are both switches
+  now. They show the true state and follow the buttons on the lamp itself. Turn
+  either off per light with `autoBrightnessSwitch` and `movementSwitch`.
+
 ## [0.3.0] — 2026-09-18
 
 ### Added

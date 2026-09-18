@@ -152,6 +152,8 @@ class Session {
     const gatt = await this.device.gatt();
     const wanted = new Set([
       CHAR_AUTH, CHAR_RSSI, CHAR_WRITE_ATTR, CHAR_COLOR_TEMP, CHAR_POWER, CHAR_BRIGHTNESS_LM,
+      '2dd11006-1c37-452d-8979-d1b4a787d0a4',
+      '2dd11007-1c37-452d-8979-d1b4a787d0a4',
     ]);
     for (const serviceUuid of await gatt.services()) {
       const service = await gatt.getPrimaryService(serviceUuid);
@@ -494,6 +496,31 @@ async function main() {
         if (restored !== original) {
           session.log(`  !! 0x${id.toString(16)} did not restore: ${restored} (was ${original})`);
         }
+      }
+      return;
+    }
+
+    if (mode === 'charwrite') {
+      // Read and optionally write one characteristic by its short id:
+      //   charwrite <MAC> <SERIAL> 1006 [value]
+      // The app drives the lamp's Auto and movement switches this way rather
+      // than through the attribute channel.
+      const short = rest[0];
+      const uuid = `2dd1${short}-1c37-452d-8979-d1b4a787d0a4`;
+      const characteristic = session.chars[uuid];
+      if (!characteristic) {
+        session.log(`${uuid} was not discovered`);
+        return;
+      }
+      characteristic.on('valuechanged', (buf) => session.log(`  notify ${short}: ${hex(buf)}`));
+      await characteristic.startNotifications().catch(() => {});
+      session.log(`${short} reads ${hex(await characteristic.readValue())}`);
+      if (rest[1] !== undefined) {
+        const value = Number(rest[1]);
+        session.log(`Writing ${short} = ${value}`);
+        await session.write(uuid, Buffer.from([value]));
+        await sleep(3_000);
+        session.log(`${short} now reads ${hex(await characteristic.readValue())}`);
       }
       return;
     }
