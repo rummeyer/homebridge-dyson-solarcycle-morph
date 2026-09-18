@@ -63,6 +63,12 @@
               "default": true,
               "description": "Adds a switch for the lamp's movement mode, where it lights on movement and goes out once the room has been still. Not the same as the motion sensor above, which only reports what the lamp sees."
             },
+            "presetSwitches": {
+              "title": "Expose the preset modes",
+              "type": "boolean",
+              "default": true,
+              "description": "Adds the lamp's Study, Relax and Precision modes as switches. Only one can be on at a time, which the lamp itself enforces."
+            },
             "daylightSwitch": {
               "title": "Expose daylight tracking",
               "type": "boolean",
@@ -120,7 +126,8 @@
                 "lights[].motionSensor",
                 "lights[].daylightSwitch",
                 "lights[].autoBrightnessSwitch",
-                "lights[].movementSwitch"
+                "lights[].movementSwitch",
+                "lights[].presetSwitches"
               ]
             }
           ]

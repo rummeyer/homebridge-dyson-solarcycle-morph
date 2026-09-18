@@ -41,6 +41,8 @@ class FakeService {
     }
     return this.characteristics.get(name)!;
   }
+  linked: FakeService[] = [];
+  addLinkedService(service: FakeService) { this.linked.push(service); return this; }
   setCharacteristic(name: string, _value: unknown) { this.getCharacteristic(name); return this; }
   updateCharacteristic(name: string, _value: unknown) { this.getCharacteristic(name); return this; }
 }
@@ -232,6 +234,36 @@ test('the movement switch can be turned off on its own', async () => {
   assert.equal(accessory.getServiceById('Switch', 'movement'), undefined);
   assert.ok(accessory.getServiceById('Switch', 'auto'), 'auto brightness is unaffected');
   assert.ok(accessory.getServiceById('Switch', 'daylight'), 'daylight is unaffected');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('each preset gets its own switch on the lamp', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+  assert.equal(registered.registered.length, 1, 'all on the one accessory');
+  const accessory = registered.registered[0]![0] as FakeAccessory;
+  const switches = ['daylight', 'auto', 'movement', 'study', 'relax', 'precision'].map((t) =>
+    accessory.getServiceById('Switch', t),
+  );
+  assert.ok(switches.every(Boolean), 'six switches');
+  assert.equal(new Set(switches).size, 6, 'and all of them distinct');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('the preset switches can be turned off', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, presetSwitches: false }] }, api);
+  api.emit('didFinishLaunching');
+  await settle();
+  const accessory = registered.registered[0]![0] as FakeAccessory;
+  assert.equal(accessory.getServiceById('Switch', 'study'), undefined);
+  assert.ok(accessory.getServiceById('Switch', 'daylight'), 'the mode switches are unaffected');
   api.emit('shutdown');
   await settle();
 });

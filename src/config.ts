@@ -31,6 +31,10 @@ export interface LightConfig {
   autoBrightnessSwitch?: boolean;
   /** Expose movement-triggered lighting as a switch. On by default. */
   movementSwitch?: boolean;
+  /**
+   * Expose the lamp's preset modes as switches. On by default.
+   */
+  presetSwitches?: boolean;
 }
 
 /** A lamp whose credentials are known, from the config or the credential store. */

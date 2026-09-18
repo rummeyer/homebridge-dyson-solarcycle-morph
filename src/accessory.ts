@@ -3,8 +3,17 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 
 import type { ResolvedLightConfig } from './config.js';
 import { DysonMorphLamp } from './dyson/lamp.js';
-import { kelvinToMired, miredToKelvin, MAX_KELVIN, MIN_KELVIN } from './dyson/protocol.js';
+import { kelvinToMired, miredToKelvin, MAX_KELVIN, MIN_KELVIN, PRESETS } from './dyson/protocol.js';
+import type { Preset } from './dyson/protocol.js';
 import type { MorphPlatform } from './platform.js';
+
+/**
+ * How long a momentary switch stays on before springing back.
+ *
+ * Long enough that the Home app has drawn it as pressed, short enough that
+ * nobody reads it as a state the lamp is in.
+ */
+const RELEASE_MS = 1_000;
 
 /**
  * Bridges one lamp's BLE session to its HomeKit services.
@@ -20,6 +29,7 @@ export class MorphAccessory {
   private readonly daylight?: Service;
   private readonly autoBrightness?: Service;
   private readonly movement?: Service;
+  private readonly presets = new Map<Preset, Service>();
   private readonly lamp: DysonMorphLamp;
 
   constructor(
@@ -85,7 +95,7 @@ export class MorphAccessory {
       this.daylight =
         this.accessory.getServiceById(Service.Switch, 'daylight') ??
         this.accessory.addService(Service.Switch, `${config.name} Daylight`, 'daylight');
-      this.daylight.setCharacteristic(Characteristic.Name, `${config.name} Daylight`);
+      this.name(this.daylight, 'Daylight');
       this.daylight
         .getCharacteristic(Characteristic.On)
         .onGet(() => this.live(() => this.lamp.getState().daylight))
@@ -99,7 +109,7 @@ export class MorphAccessory {
       this.autoBrightness =
         this.accessory.getServiceById(Service.Switch, 'auto') ??
         this.accessory.addService(Service.Switch, `${config.name} Auto Brightness`, 'auto');
-      this.autoBrightness.setCharacteristic(Characteristic.Name, `${config.name} Auto Brightness`);
+      this.name(this.autoBrightness, 'Auto Brightness');
       this.autoBrightness
         .getCharacteristic(Characteristic.On)
         .onGet(() => this.live(() => this.lamp.getState().autoBrightness))
@@ -112,17 +122,44 @@ export class MorphAccessory {
       this.movement =
         this.accessory.getServiceById(Service.Switch, 'movement') ??
         this.accessory.addService(Service.Switch, `${config.name} Movement`, 'movement');
-      this.movement.setCharacteristic(Characteristic.Name, `${config.name} Movement`);
+      this.name(this.movement, 'Movement');
       this.movement
         .getCharacteristic(Characteristic.On)
         .onGet(() => this.live(() => this.lamp.getState().movement))
         .onSet((value) => this.handleSet('movement mode', () => this.lamp.setMovement(value as boolean)));
     }
 
+    if (config.presetSwitches !== false) {
+      // Momentary rather than stateful. The lamp does hold a preset and reports
+      // which, but what these are for is applying a set of values — so pressing
+      // one applies it and the switch springs back, the way a scene does.
+      for (const preset of Object.keys(PRESETS) as Preset[]) {
+        // "Preset" in the name, so a momentary one is not mistaken in a list
+        // for the mode switches above it, which do hold a state.
+        const label = `${preset[0]!.toUpperCase() + preset.slice(1)} Preset`;
+        const service =
+          this.accessory.getServiceById(Service.Switch, preset) ??
+          this.accessory.addService(Service.Switch, `${config.name} ${label}`, preset);
+        this.name(service, label);
+        service
+          .getCharacteristic(Characteristic.On)
+          .onGet(() => false)
+          .onSet(async (value) => {
+            if (!value) {
+              return;
+            }
+            await this.handleSet(`${label} preset`, () => this.lamp.setPreset(preset));
+            this.release(service);
+          });
+        this.presets.set(preset, service);
+      }
+    }
+
     if (config.motionSensor) {
       this.motion =
         this.accessory.getService(Service.MotionSensor) ??
         this.accessory.addService(Service.MotionSensor, `${config.name} Motion`);
+      this.name(this.motion, 'Motion');
       this.motion
         .getCharacteristic(Characteristic.MotionDetected)
         .onGet(() => this.live(() => this.motion?.getCharacteristic(Characteristic.MotionDetected).value ?? false));
@@ -163,6 +200,33 @@ export class MorphAccessory {
    * than saying nothing. Throwing a communication failure is how an accessory
    * reports itself as unavailable, and the Home app shows "No Response".
    */
+  /**
+   * Let a momentary switch spring back.
+   *
+   * HomeKit has no stateless switch that appears as one, so this is the usual
+   * shape: report the press, then push the characteristic back to off shortly
+   * after so it does not sit there claiming to be a state.
+   */
+  private release(service: Service): void {
+    setTimeout(() => {
+      service.updateCharacteristic(this.platform.api.hap.Characteristic.On, false);
+    }, RELEASE_MS).unref();
+  }
+
+  /**
+   * Name a service so the Home app shows it.
+   *
+   * `Name` alone is not enough: Home reads `ConfiguredName`, and without it
+   * every switch on an accessory shows under the accessory's own name — six
+   * controls all called "Desk Light".
+   */
+  private name(service: Service, label: string): void {
+    const { Characteristic } = this.platform.api.hap;
+    const full = `${this.config.name} ${label}`;
+    service.setCharacteristic(Characteristic.Name, full);
+    service.setCharacteristic(Characteristic.ConfiguredName, full);
+  }
+
   private live<T>(read: () => T): T {
     if (!this.lamp.isConnected()) {
       throw new this.platform.api.hap.HapStatusError(

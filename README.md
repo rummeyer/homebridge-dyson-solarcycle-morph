@@ -33,6 +33,17 @@ lamp is really doing rather than what was last asked of it:
 | **Auto Brightness** | trims the level to suit the room as the light around it changes |
 | **Movement** | lights when it sees movement, goes out once the room has been still |
 
+Plus the lamp's three preset modes — **Study**, **Relax** and **Precision** — as
+switches that apply a set of values and spring back, the way a scene does. They
+are what the buttons in the MyDyson app do, and the lamp allows only one at a
+time.
+
+| preset | where it puts the lamp |
+| --- | --- |
+| Study | 4741 K, fairly bright |
+| Relax | 2900 K, dim and warm |
+| Precision | 4600 K, full output |
+
 And the lamp's **motion sensor**, as a sensor in its own right, off by default.
 That one reports what the lamp sees; the Movement switch decides whether the
 lamp acts on it.
@@ -139,6 +150,7 @@ Everything except the lights is optional.
 | **Lights → Expose daylight tracking** | The Daylight switch. On by default |
 | **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
 | **Lights → Expose movement mode** | The Movement switch. On by default |
+| **Lights → Expose the preset modes** | The Study, Relax and Precision switches. On by default |
 | **Bluetooth adapter** | Only needed if the host has more than one, e.g. `hci1` |
 
 ## If something goes wrong

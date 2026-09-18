@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The lamp's preset modes, as switches.** Study, Relax and Precision apply a
+  set of values and spring back, the way a scene does. Turn them off per light
+  with `presetSwitches`.
+
+### Fixed
+
+- Every switch showed in the Home app under the accessory's own name, so a lamp
+  with three of them had three controls all called the same thing. They now
+  carry their own names.
+
 ## [0.4.0] — 2026-09-18
 
 ### Added

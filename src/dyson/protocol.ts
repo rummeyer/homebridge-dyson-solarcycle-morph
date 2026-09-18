@@ -102,6 +102,24 @@ export const MsgType = {
 const ATTR_DAYLIGHT = 0x2013;
 
 /**
+ * The lamp's preset modes, each activated by writing `01` to its attribute.
+ *
+ * Mutually exclusive, and the lamp keeps them so itself: turning one on makes
+ * it report the previous one off, unasked. Writing `00` clears one without
+ * disturbing the brightness and colour temperature it left behind.
+ *
+ * The app's fourth preset, `SYNCHRONISED`, is not here — it is daylight
+ * tracking under another name, and `he0/a.java`'s `k()` returns null for it.
+ */
+export const PRESETS = {
+  study: 0x201e,
+  relax: 0x201f,
+  precision: 0x2021,
+} as const;
+
+export type Preset = keyof typeof PRESETS;
+
+/**
  * Build an attribute write: `attribute(2) || length(2) || value`, framed.
  *
  * Both lengths are little-endian, matching every other multi-byte value here.
@@ -118,6 +136,18 @@ export function buildDaylightWrite(on: boolean): Buffer[] {
   return buildAttributeWrite(ATTR_DAYLIGHT, Buffer.from([on ? 0x01 : 0x00]));
 }
 
+/** Activate a preset, or clear it. */
+export function buildPresetWrite(preset: Preset, on: boolean): Buffer[] {
+  return buildAttributeWrite(PRESETS[preset], Buffer.from([on ? 0x01 : 0x00]));
+}
+
+/** Ask the lamp whether a preset is active. */
+export function buildPresetRead(preset: Preset): Buffer[] {
+  const body = Buffer.alloc(2);
+  body.writeUInt16LE(PRESETS[preset], 0);
+  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
+}
+
 /** Ask the lamp whether it is tracking daylight. */
 export function buildDaylightRead(): Buffer[] {
   const body = Buffer.alloc(2);
@@ -131,17 +161,18 @@ export function buildDaylightRead(): Buffer[] {
  * The reply carries a status byte the report does not, so the two cannot share
  * a decoder: `attribute(2) || status || length(2) || value`.
  */
-export function decodeAttributeValue(buffer: Buffer): { daylight: boolean } | undefined {
+export function decodeAttributeValue(buffer: Buffer): AttributeReport | undefined {
   if (buffer.length < 8) {
     return undefined;
   }
   if ((buffer[0]! & 0x80) === 0 || buffer[1] !== MsgType.ATTRIBUTE_VALUE) {
     return undefined;
   }
-  if (buffer.readUInt16LE(2) !== ATTR_DAYLIGHT || buffer[4] !== 0x00) {
+  // A non-zero status means the lamp refused the question, not that it said no.
+  if (buffer[4] !== 0x00) {
     return undefined;
   }
-  return { daylight: buffer[7] !== 0 };
+  return named(buffer.readUInt16LE(2), buffer[7]!);
 }
 
 /**
@@ -150,7 +181,7 @@ export function decodeAttributeValue(buffer: Buffer): { daylight: boolean } | un
  * @returns Whether daylight mode is on, or `undefined` for anything that is not
  * a daylight-mode report — acknowledgements and other attributes both land here.
  */
-export function decodeAttributeReport(buffer: Buffer): { daylight: boolean } | undefined {
+export function decodeAttributeReport(buffer: Buffer): AttributeReport | undefined {
   // header, type, attribute id (2), length (2), value (1)
   if (buffer.length < 7) {
     return undefined;
@@ -158,10 +189,25 @@ export function decodeAttributeReport(buffer: Buffer): { daylight: boolean } | u
   if ((buffer[0]! & 0x80) === 0 || buffer[1] !== MsgType.ATTRIBUTE_REPORT) {
     return undefined;
   }
-  if (buffer.readUInt16LE(2) !== ATTR_DAYLIGHT) {
-    return undefined;
+  return named(buffer.readUInt16LE(2), buffer[buffer.length - 1]!);
+}
+
+/** One attribute this client understands, and what the lamp said about it. */
+export type AttributeReport =
+  | { daylight: boolean }
+  | { preset: Preset; active: boolean };
+
+function named(attribute: number, value: number): AttributeReport | undefined {
+  if (attribute === ATTR_DAYLIGHT) {
+    return { daylight: value !== 0 };
   }
-  return { daylight: buffer[buffer.length - 1] !== 0 };
+  for (const [preset, id] of Object.entries(PRESETS)) {
+    if (id === attribute) {
+      return { preset: preset as Preset, active: value !== 0 };
+    }
+  }
+  // Plenty of other attributes exist and are not decoded; see docs/PROTOCOL.md.
+  return undefined;
 }
 
 export const MIN_KELVIN = 2700;

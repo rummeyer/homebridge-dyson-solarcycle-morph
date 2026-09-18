@@ -79,6 +79,7 @@ export class MorphPlatform implements DynamicPlatformPlugin {
 
       const lamp = new MorphAccessory(this, accessory, resolved);
       this.lamps.push(lamp);
+
       void lamp.start();
     }
 

@@ -20,6 +20,7 @@ import { Pacer } from './pace.js';
 import { OperationQueue } from './queue.js';
 import { planReconciliation } from './reconcile.js';
 import { SettleWindow } from './settle.js';
+import type { Preset } from './protocol.js';
 import {
   CHAR_AUTH,
   CHAR_BRIGHTNESS_LM,
@@ -32,6 +33,9 @@ import {
   CHAR_WRITE_ATTR,
   buildDaylightRead,
   buildDaylightWrite,
+  buildPresetRead,
+  buildPresetWrite,
+  PRESETS,
   decodeAttributeReport,
   decodeAttributeValue,
   DysonMessage,
@@ -183,6 +187,13 @@ export interface LampState {
   autoBrightness: boolean;
   /** Whether the lamp lights on movement and goes out when the room is still. */
   movement: boolean;
+  /**
+   * Which preset the lamp is in, or `none`.
+   *
+   * The lamp keeps these mutually exclusive itself and reports both sides of a
+   * change, so this follows rather than decides.
+   */
+  preset: Preset | 'none';
 }
 
 export interface LampOptions {
@@ -274,6 +285,7 @@ export class DysonMorphLamp extends EventEmitter {
     daylight: false,
     autoBrightness: false,
     movement: false,
+    preset: 'none',
   };
 
   /** What the user last asked for. Reconciliation aims at this, not at guesses. */
@@ -415,6 +427,31 @@ export class DysonMorphLamp extends EventEmitter {
     this.log.debug(`${label} ${on ? 'on' : 'off'} requested`);
     this.patchState({ [field]: on });
     await this.writes.schedule(uuid, () => this.write(uuid, Buffer.from([on ? 0x01 : 0x00])));
+  }
+
+  /**
+   * Put the lamp into a preset, or take it out of the one it is in.
+   *
+   * Only the chosen preset is written: the lamp turns the previous one off by
+   * itself and says so, and writing both would race that.
+   */
+  async setPreset(preset: Preset | 'none'): Promise<void> {
+    this.requireConnection();
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      throw new Error('this lamp does not expose the attribute channel');
+    }
+    const previous = this.state.preset;
+    this.log.debug(`Preset ${preset} requested`);
+    this.patchState({ preset });
+    const write = preset === 'none' ? previous : preset;
+    if (write === 'none') {
+      return;
+    }
+    await this.writes.schedule(`${CHAR_WRITE_ATTR}:preset`, async () => {
+      for (const fragment of buildPresetWrite(write, preset !== 'none')) {
+        await this.write(CHAR_WRITE_ATTR, fragment);
+      }
+    });
   }
 
   async setDaylight(on: boolean): Promise<void> {
@@ -792,7 +829,8 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
     try {
-      for (const fragment of buildDaylightRead()) {
+      const asks = [buildDaylightRead(), ...Object.keys(PRESETS).map((p) => buildPresetRead(p as Preset))];
+      for (const fragment of asks.flat()) {
         await this.write(CHAR_WRITE_ATTR, fragment);
       }
     } catch (error) {
@@ -974,10 +1012,20 @@ export class DysonMorphLamp extends EventEmitter {
           // that never arrived.
           this.log.debug(`Attribute report ${value.toString('hex')}`);
           const report = decodeAttributeReport(value) ?? decodeAttributeValue(value);
-          if (report) {
-            this.daylightReported = true;
+          if (!report) {
+            return undefined;
           }
-          return report;
+          if ('daylight' in report) {
+            this.daylightReported = true;
+            return { daylight: report.daylight };
+          }
+          // A preset going off only means "none" if it is the one we thought was
+          // on; the lamp reports the old one off just after reporting the new
+          // one on, and that must not undo it.
+          if (report.active) {
+            return { preset: report.preset };
+          }
+          return this.state.preset === report.preset ? { preset: 'none' as const } : undefined;
         },
       ],
     ];
