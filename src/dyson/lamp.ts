@@ -1174,11 +1174,21 @@ export class DysonMorphLamp extends EventEmitter {
   }
 }
 
-function describeState(state: LampState): string {
-  // Daylight only when it is on: naming it every time would put "no daylight"
-  // on most lines of the log for a mode most lamps spend most of their time out of.
-  const daylight = state.daylight ? ', daylight' : '';
-  return `${state.on ? 'on' : 'off'}, ${state.brightness}%, ${state.kelvin}K${daylight}`;
+export function describeState(state: LampState): string {
+  // Each mode is named only while the lamp is in it: spelling out the ones it
+  // is not would put "no daylight, no auto, no movement" on nearly every line.
+  //
+  // All of them, though, not just daylight. A line is logged when the state
+  // changes, so a mode missing from it produces a line identical to the one
+  // before — which reads as a repeat rather than as the change it is, and hides
+  // exactly the switch someone is trying to watch.
+  const modes = [
+    state.daylight ? 'daylight' : '',
+    state.autoBrightness ? 'auto' : '',
+    state.movement ? 'movement' : '',
+    state.preset !== 'none' ? state.preset : '',
+  ].filter(Boolean);
+  return [state.on ? 'on' : 'off', `${state.brightness}%`, `${state.kelvin}K`, ...modes].join(', ');
 }
 
 function sleep(ms: number): Promise<void> {

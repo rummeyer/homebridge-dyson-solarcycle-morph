@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-09-19
+
+### Fixed
+
+- **The state line in the log now names every mode the lamp is in**, not just
+  daylight tracking. A line is written when the state changes, so a mode missing
+  from it produced a line identical to the one before — turning auto brightness
+  or movement on read as a stray repeat rather than as the change it was, and
+  hid exactly the switch someone was trying to watch. Auto brightness, movement
+  and the active preset are named alongside daylight now.
+
 ## [1.1.0] — 2026-09-19
 
 ### Changed
