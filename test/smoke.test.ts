@@ -109,6 +109,13 @@ const light = {
   accountId: '12345678-90ab-cdef-1234-567890abcdef',
 };
 
+const LIGHT_UUID = `uuid:homebridge-dyson-solarcycle-morph:${light.serial}`;
+const SWITCH_UUID = `${LIGHT_UUID}:switches`;
+
+/** One lamp is two accessories now; pick whichever the assertion is about. */
+const find = (registered: { registered: unknown[][] }, uuid: string) =>
+  (registered.registered.flat() as FakeAccessory[]).find((a) => a.UUID === uuid);
+
 test('Homebridge can load the built entry point and register the platform', async () => {
   // Mirrors homebridge/dist/plugin.js: dynamic import, then the default export
   // (falling back to a nested default, which only CommonJS builds need).
@@ -141,12 +148,16 @@ test('a configured light produces a lightbulb accessory with working handlers', 
   api.emit('didFinishLaunching');
   await settle();
 
-  assert.equal(registered.registered.length, 1, 'one accessory registered');
-  const accessory = registered.registered[0]![0] as FakeAccessory;
-  assert.equal(accessory.UUID, `uuid:homebridge-dyson-solarcycle-morph:${light.serial}`);
+  assert.equal(registered.registered.length, 2, 'the light and its switches');
+  const accessory = find(registered, LIGHT_UUID);
+  assert.ok(accessory, 'the light keeps the UUID it has always had');
 
   const bulb = accessory.getService('Lightbulb');
   assert.ok(bulb, 'a Lightbulb service exists');
+
+  // The point of the split: tapping the lamp in the Home app turns it on,
+  // rather than opening a folder of controls.
+  assert.equal(accessory.getService('Switch'), undefined, 'and no switch sits on the lamp itself');
 
   // An unreachable lamp must report itself as such rather than serving the last
   // value it happened to know, which HomeKit would show as current.
@@ -181,7 +192,7 @@ test('the daylight switch is there unless it is turned off', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  assert.ok((registered.registered[0]![0] as FakeAccessory).getServiceById('Switch', 'daylight'));
+  assert.ok(find(registered, SWITCH_UUID)!.getServiceById('Switch', 'daylight'));
   api.emit('shutdown');
   await settle();
 });
@@ -192,7 +203,7 @@ test('the daylight switch can be turned off', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, daylightSwitch: false }] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  const accessory = registered.registered[0]![0] as FakeAccessory;
+  const accessory = find(registered, SWITCH_UUID)!;
   assert.equal(accessory.getServiceById('Switch', 'daylight'), undefined);
   assert.ok(accessory.getServiceById('Switch', 'auto'), 'the other switches are unaffected');
   api.emit('shutdown');
@@ -205,7 +216,7 @@ test('each mode gets its own switch, and they are distinct', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  const accessory = registered.registered[0]![0] as FakeAccessory;
+  const accessory = find(registered, SWITCH_UUID)!;
   const subtypes = ['daylight', 'auto', 'movement'].map((t) => accessory.getServiceById('Switch', t));
   // Three Switch services on one accessory: binding any of them by type alone
   // would wire several handlers to whichever came first.
@@ -221,7 +232,7 @@ test('the movement switch can be turned off on its own', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, movementSwitch: false }] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  const accessory = registered.registered[0]![0] as FakeAccessory;
+  const accessory = find(registered, SWITCH_UUID)!;
   assert.equal(accessory.getServiceById('Switch', 'movement'), undefined);
   assert.ok(accessory.getServiceById('Switch', 'auto'), 'auto brightness is unaffected');
   assert.ok(accessory.getServiceById('Switch', 'daylight'), 'daylight is unaffected');
@@ -235,12 +246,11 @@ test('each preset gets its own switch on the lamp', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  assert.equal(registered.registered.length, 1, 'all on the one accessory');
-  const accessory = registered.registered[0]![0] as FakeAccessory;
+  const accessory = find(registered, SWITCH_UUID)!;
   const switches = ['daylight', 'auto', 'movement', 'study', 'relax', 'precision'].map((t) =>
     accessory.getServiceById('Switch', t),
   );
-  assert.ok(switches.every(Boolean), 'six switches');
+  assert.ok(switches.every(Boolean), 'six switches, all on the one accessory');
   assert.equal(new Set(switches).size, 6, 'and all of them distinct');
   api.emit('shutdown');
   await settle();
@@ -252,7 +262,7 @@ test('the preset switches can be turned off', async () => {
   new MorphPlatform(fakeLog, { platform: 'x', lights: [{ ...light, presetSwitches: false }] }, api);
   api.emit('didFinishLaunching');
   await settle();
-  const accessory = registered.registered[0]![0] as FakeAccessory;
+  const accessory = find(registered, SWITCH_UUID)!;
   assert.equal(accessory.getServiceById('Switch', 'study'), undefined);
   assert.ok(accessory.getServiceById('Switch', 'daylight'), 'the mode switches are unaffected');
   api.emit('shutdown');
@@ -273,7 +283,99 @@ test('a motion sensor left on a cached accessory is taken off it', async () => {
   await settle();
   assert.equal(cached.getService('MotionSensor'), undefined, 'the sensor is gone');
   assert.ok(cached.getService('Lightbulb'), 'and the lamp is still there');
-  assert.equal(registered.registered.length, 0, 'the cached accessory was reused');
+  assert.equal(registered.registered.length, 1, 'only the switches accessory is new');
+  assert.ok(find(registered, SWITCH_UUID), 'and the cached lamp was reused');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('switches left on a cached lamp from before 1.1.0 are taken off it', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  const platform = new MorphPlatform(fakeLog, { platform: 'x', lights: [light] }, api);
+
+  // An accessory as 1.0.2 left it: the light and all six switches together.
+  const cached = new FakeAccessory(light.name, LIGHT_UUID);
+  cached.addService('Lightbulb', 'Desk');
+  for (const subtype of ['daylight', 'auto', 'movement', 'study', 'relax', 'precision']) {
+    cached.addService('Switch', `Desk ${subtype}`, subtype);
+  }
+  (platform as unknown as { configureAccessory: (a: unknown) => void }).configureAccessory(cached);
+
+  api.emit('didFinishLaunching');
+  await settle();
+
+  // Not adding them here any more is not the same as removing them: without
+  // this they would show in both places at once.
+  assert.equal(cached.getService('Switch'), undefined, 'the lamp is a light and nothing else');
+  assert.ok(cached.getService('Lightbulb'), 'and it is still a light');
+  const switches = find(registered, SWITCH_UUID);
+  assert.ok(switches, 'the switches have an accessory of their own');
+  assert.equal(
+    ['daylight', 'auto', 'movement', 'study', 'relax', 'precision'].filter((t) =>
+      switches.getServiceById('Switch', t),
+    ).length,
+    6,
+    'and all six are on it',
+  );
+  api.emit('shutdown');
+  await settle();
+});
+
+test('with every switch turned off there is no switch accessory at all', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  const platform = new MorphPlatform(
+    fakeLog,
+    {
+      platform: 'x',
+      lights: [
+        {
+          ...light,
+          daylightSwitch: false,
+          autoBrightnessSwitch: false,
+          movementSwitch: false,
+          presetSwitches: false,
+        },
+      ],
+    },
+    api,
+  );
+
+  // One from a run before they were all turned off, which has to go.
+  const cachedSwitches = new FakeAccessory(`${light.name} Switches`, SWITCH_UUID);
+  (platform as unknown as { configureAccessory: (a: unknown) => void }).configureAccessory(cachedSwitches);
+
+  api.emit('didFinishLaunching');
+  await settle();
+
+  assert.equal(registered.registered.length, 1, 'just the light');
+  assert.ok(find(registered, LIGHT_UUID), 'and it is the light');
+  assert.deepEqual(registered.unregistered, [[cachedSwitches]], 'the empty switch accessory is dropped');
+  api.emit('shutdown');
+  await settle();
+});
+
+test('a switch turned off later comes off the accessory it is on', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+  const { api, registered } = fakeApi();
+  const platform = new MorphPlatform(
+    fakeLog,
+    { platform: 'x', lights: [{ ...light, movementSwitch: false }] },
+    api,
+  );
+
+  // Cached from a run when movement was still on.
+  const cached = new FakeAccessory(`${light.name} Switches`, SWITCH_UUID);
+  cached.addService('Switch', 'Desk Movement', 'movement');
+  (platform as unknown as { configureAccessory: (a: unknown) => void }).configureAccessory(cached);
+
+  api.emit('didFinishLaunching');
+  await settle();
+
+  assert.equal(cached.getServiceById('Switch', 'movement'), undefined, 'the disabled switch is gone');
+  assert.ok(cached.getServiceById('Switch', 'daylight'), 'the ones still wanted are there');
+  assert.equal(registered.unregistered.length, 0, 'and the accessory itself stays');
   api.emit('shutdown');
   await settle();
 });
@@ -323,7 +425,7 @@ test('credentials stored by the settings UI are used when the config omits them'
   api.emit('didFinishLaunching');
   await settle();
 
-  assert.equal(registered.registered.length, 1, 'the stored key was picked up');
+  assert.ok(find(registered, LIGHT_UUID), 'the stored key was picked up');
   api.emit('shutdown');
   await settle();
 });
@@ -343,7 +445,7 @@ test('a serial is matched case-insensitively against the store', async () => {
   api.emit('didFinishLaunching');
   await settle();
 
-  assert.equal(registered.registered.length, 1);
+  assert.ok(find(registered, LIGHT_UUID));
   api.emit('shutdown');
   await settle();
 });

@@ -7,12 +7,16 @@ import type {
 } from 'homebridge';
 
 import { MorphAccessory } from './accessory.js';
-import { validateLightConfig, type LightConfig, type MorphPlatformConfig, type ResolvedLightConfig } from './config.js';
+import { hasSwitches, validateLightConfig, type LightConfig, type MorphPlatformConfig, type ResolvedLightConfig } from './config.js';
 import { CredentialStore } from './dyson/credentials.js';
 import { PLATFORM_NAME, PLUGIN_NAME } from './settings.js';
 
 /**
- * Registers one HomeKit accessory per configured lamp and owns their lifecycle.
+ * Registers each configured lamp's HomeKit accessories and owns their lifecycle.
+ *
+ * A lamp is two accessories: the light itself, and a second one carrying every
+ * switch. Keeping them apart is what lets the Home app draw the lamp as a light
+ * you tap to turn on, rather than a folder of six controls.
  */
 export class MorphPlatform implements DynamicPlatformPlugin {
   /** Accessories restored from Homebridge's cache, keyed by UUID. */
@@ -61,29 +65,49 @@ export class MorphPlatform implements DynamicPlatformPlugin {
       }
 
       // Keyed on the serial so renaming a lamp does not orphan its accessory.
-      const uuid = this.api.hap.uuid.generate(`${PLUGIN_NAME}:${light.serial}`);
-      configured.add(uuid);
+      // The light keeps the key it has always had, so an existing accessory —
+      // and every automation and room already pointing at it — survives.
+      const lightAccessory = this.adopt(`${PLUGIN_NAME}:${light.serial}`, light.name, light);
+      configured.add(lightAccessory.UUID);
 
-      let accessory = this.cached.get(uuid);
-      if (accessory) {
-        accessory.displayName = light.name;
-        accessory.context.light = light satisfies LightConfig;
-        this.api.updatePlatformAccessories([accessory]);
-        this.log.info(`Restoring ${light.name} (${light.mac})`);
-      } else {
-        accessory = new this.api.platformAccessory(light.name, uuid);
-        accessory.context.light = light satisfies LightConfig;
-        this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
-        this.log.info(`Adding ${light.name} (${light.mac})`);
+      const switchAccessory = hasSwitches(light)
+        ? this.adopt(`${PLUGIN_NAME}:${light.serial}:switches`, `${light.name} Switches`, light)
+        : undefined;
+      if (switchAccessory) {
+        configured.add(switchAccessory.UUID);
       }
 
-      const lamp = new MorphAccessory(this, accessory, resolved);
+      const lamp = new MorphAccessory(this, { light: lightAccessory, switches: switchAccessory }, resolved);
       this.lamps.push(lamp);
 
       void lamp.start();
     }
 
-      this.pruneStaleAccessories(configured);
+    this.pruneStaleAccessories(configured);
+  }
+
+  /**
+   * Restore an accessory from Homebridge's cache, or register a new one.
+   *
+   * @param key Stable identity for this accessory; the UUID is derived from it.
+   */
+  private adopt(key: string, name: string, light: LightConfig): PlatformAccessory {
+    const uuid = this.api.hap.uuid.generate(key);
+
+    const cached = this.cached.get(uuid);
+    if (cached) {
+      cached.displayName = name;
+      cached.context.light = light satisfies LightConfig;
+      this.api.updatePlatformAccessories([cached]);
+      this.log.info(`Restoring ${name} (${light.mac})`);
+      return cached;
+    }
+
+    const accessory = new this.api.platformAccessory(name, uuid);
+    accessory.context.light = light satisfies LightConfig;
+    this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
+    this.log.info(`Adding ${name} (${light.mac})`);
+    return accessory;
   }
 
   /**

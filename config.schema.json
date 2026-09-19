@@ -2,7 +2,7 @@
   "pluginAlias": "DysonSolarcycleMorph",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph.\n\n**The lamp must be registered in the MyDyson app.** Its key is issued by Dyson against the account the lamp belongs to and cannot be read from the device itself.",
+  "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph.\n\n**The lamp must be registered in the MyDyson app.** Its key is issued by Dyson against the account the lamp belongs to and cannot be read from the device itself.\n\nEach lamp becomes two accessories in the Home app: the light itself, and a second one holding the switches below.",
   "schema": {
     "type": "object",
     "properties": {

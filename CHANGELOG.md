@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-09-19
+
+### Changed
+
+- **A lamp is now two accessories: the light, and its switches beside it.** The
+  light carries nothing but on/off, brightness and colour temperature, so the
+  Home app draws it as a light you tap to turn on rather than as a folder of six
+  controls. Everything that is a switch — Daylight, Auto Brightness, Movement
+  and the three presets — moves to a second accessory called `<name> Switches`.
+
+  The lamp keeps the identity it had, so its room, its name and every automation
+  and scene pointing at the light itself survive. **Automations and scenes that
+  used one of the switches have to be pointed at the new accessory**, which the
+  Home app cannot do for you: to it, the old switch is simply gone.
+
+  With all four switch settings turned off there is nothing for the second
+  accessory to hold, so it is not created at all, and one left over from an
+  earlier run is removed.
+
+### Fixed
+
+- A switch turned off in the settings is now taken off the accessory rather than
+  merely no longer added, so it stops showing in the Home app. This was the same
+  mistake 1.0.1 fixed for the motion sensor.
+
 ## [1.0.2] — 2026-09-18
 
 ### Changed

@@ -16,7 +16,28 @@ import type { MorphPlatform } from './platform.js';
 const RELEASE_MS = 1_000;
 
 /**
+ * Every subtype this plugin has put a Switch service under.
+ *
+ * Needed to take them off the light accessory, where versions up to 1.0.2 put
+ * them. A service on a cached accessory stays there until it is removed, so
+ * without this they would show in both places at once.
+ */
+const SWITCH_SUBTYPES = ['daylight', 'auto', 'movement', ...Object.keys(PRESETS)];
+
+/** The two accessories one lamp is made of. */
+export interface MorphAccessories {
+  /** The lamp itself, and nothing but the lamp. */
+  light: PlatformAccessory;
+  /** Every switch, on an accessory of its own. Absent when all are turned off. */
+  switches?: PlatformAccessory;
+}
+
+/**
  * Bridges one lamp's BLE session to its HomeKit services.
+ *
+ * The lamp is two accessories: a light, and a box of switches beside it. One
+ * BLE session drives both, which is the reason they are one class — the lamp
+ * allows a single connection, so the switches cannot own one of their own.
  *
  * Writes are optimistic — HomeKit's 10-second characteristic timeout is shorter
  * than a BLE reconnect, so a command issued while the lamp is away would
@@ -25,15 +46,15 @@ const RELEASE_MS = 1_000;
  */
 export class MorphAccessory {
   private readonly lightbulb: Service;
-  private readonly daylight?: Service;
-  private readonly autoBrightness?: Service;
-  private readonly movement?: Service;
+  private daylight?: Service;
+  private autoBrightness?: Service;
+  private movement?: Service;
   private readonly presets = new Map<Preset, Service>();
   private readonly lamp: DysonMorphLamp;
 
   constructor(
     private readonly platform: MorphPlatform,
-    private readonly accessory: PlatformAccessory,
+    accessories: MorphAccessories,
     private readonly config: ResolvedLightConfig,
   ) {
     const { Service, Characteristic } = this.platform.api.hap;
@@ -46,23 +67,41 @@ export class MorphAccessory {
       log: platform.log,
     });
 
-    (this.accessory.getService(Service.AccessoryInformation) ?? this.accessory.addService(Service.AccessoryInformation))
-      .setCharacteristic(Characteristic.Manufacturer, 'Dyson')
-      .setCharacteristic(Characteristic.Model, 'Solarcycle Morph')
-      .setCharacteristic(Characteristic.SerialNumber, config.serial);
+    this.describe(accessories.light, config.serial);
+    if (accessories.switches) {
+      // A serial of its own, so the two are not both claiming to be the same
+      // piece of hardware.
+      this.describe(accessories.switches, `${config.serial}-SWITCHES`);
+    }
 
     // Removed in 1.0.0, but a service already on a cached accessory stays there
     // until it is taken off: not adding it any more is not the same as removing
     // it, and anyone who had it enabled would keep a sensor reading motion
     // forever.
-    const staleMotion = this.accessory.getService(Service.MotionSensor);
+    const staleMotion = accessories.light.getService(Service.MotionSensor);
     if (staleMotion) {
-      this.accessory.removeService(staleMotion);
+      accessories.light.removeService(staleMotion);
       this.platform.log.info(`Removed the motion sensor from ${config.name}; it never reported anything real`);
     }
 
+    // The same applies to the switches, which sat here until 1.1.0.
+    const moved = SWITCH_SUBTYPES.filter((subtype) => {
+      const stale = accessories.light.getServiceById(Service.Switch, subtype);
+      if (!stale) {
+        return false;
+      }
+      accessories.light.removeService(stale);
+      return true;
+    }).length;
+    if (moved > 0) {
+      this.platform.log.info(
+        `Took ${moved} switch${moved === 1 ? '' : 'es'} off ${config.name}; ` +
+          `${moved === 1 ? 'it lives' : 'they live'} on their own accessory now`,
+      );
+    }
+
     this.lightbulb =
-      this.accessory.getService(Service.Lightbulb) ?? this.accessory.addService(Service.Lightbulb, config.name);
+      accessories.light.getService(Service.Lightbulb) ?? accessories.light.addService(Service.Lightbulb, config.name);
     this.lightbulb.setCharacteristic(Characteristic.Name, config.name);
 
     this.lightbulb
@@ -95,73 +134,8 @@ export class MorphAccessory {
       this.movement?.updateCharacteristic(Characteristic.On, state.movement);
     });
 
-    if (config.daylightSwitch !== false) {
-      // A switch rather than a characteristic on the lightbulb: HomeKit renders
-      // only the characteristics it knows, so a custom one would be invisible in
-      // the Home app and reachable only from third-party clients.
-      // By subtype, not by type: this accessory carries more than one Switch,
-      // and a lookup by type alone would find whichever came first.
-      this.daylight =
-        this.accessory.getServiceById(Service.Switch, 'daylight') ??
-        this.accessory.addService(Service.Switch, `${config.name} Daylight`, 'daylight');
-      this.name(this.daylight, 'Daylight');
-      this.daylight
-        .getCharacteristic(Characteristic.On)
-        .onGet(() => this.live(() => this.lamp.getState().daylight))
-        // Reports the mode faithfully but cannot change it; see setDaylight.
-        // The rejection is what makes the Home app put the switch back rather
-        // than leave it showing a state the lamp is not in.
-        .onSet((value) => this.handleSet('daylight mode', () => this.lamp.setDaylight(value as boolean)));
-    }
-
-    if (config.autoBrightnessSwitch !== false) {
-      this.autoBrightness =
-        this.accessory.getServiceById(Service.Switch, 'auto') ??
-        this.accessory.addService(Service.Switch, `${config.name} Auto Brightness`, 'auto');
-      this.name(this.autoBrightness, 'Auto Brightness');
-      this.autoBrightness
-        .getCharacteristic(Characteristic.On)
-        .onGet(() => this.live(() => this.lamp.getState().autoBrightness))
-        .onSet((value) => this.handleSet('auto brightness', () => this.lamp.setAutoBrightness(value as boolean)));
-    }
-
-    if (config.movementSwitch !== false) {
-      // Whether the lamp acts on what its sensor sees. Reading the sensor
-      // itself is not possible; see docs/PROTOCOL.md.
-      this.movement =
-        this.accessory.getServiceById(Service.Switch, 'movement') ??
-        this.accessory.addService(Service.Switch, `${config.name} Movement`, 'movement');
-      this.name(this.movement, 'Movement');
-      this.movement
-        .getCharacteristic(Characteristic.On)
-        .onGet(() => this.live(() => this.lamp.getState().movement))
-        .onSet((value) => this.handleSet('movement mode', () => this.lamp.setMovement(value as boolean)));
-    }
-
-    if (config.presetSwitches !== false) {
-      // Momentary rather than stateful. The lamp does hold a preset and reports
-      // which, but what these are for is applying a set of values — so pressing
-      // one applies it and the switch springs back, the way a scene does.
-      for (const preset of Object.keys(PRESETS) as Preset[]) {
-        // "Preset" in the name, so a momentary one is not mistaken in a list
-        // for the mode switches above it, which do hold a state.
-        const label = `${preset[0]!.toUpperCase() + preset.slice(1)} Preset`;
-        const service =
-          this.accessory.getServiceById(Service.Switch, preset) ??
-          this.accessory.addService(Service.Switch, `${config.name} ${label}`, preset);
-        this.name(service, label);
-        service
-          .getCharacteristic(Characteristic.On)
-          .onGet(() => false)
-          .onSet(async (value) => {
-            if (!value) {
-              return;
-            }
-            await this.handleSet(`${label} preset`, () => this.lamp.setPreset(preset));
-            this.release(service);
-          });
-        this.presets.set(preset, service);
-      }
+    if (accessories.switches) {
+      this.addSwitches(accessories.switches);
     }
 
     this.lamp.on('state', (state) => {
@@ -174,6 +148,104 @@ export class MorphAccessory {
       this.autoBrightness?.updateCharacteristic(Characteristic.On, state.autoBrightness);
       this.movement?.updateCharacteristic(Characteristic.On, state.movement);
     });
+  }
+
+  /**
+   * Put every enabled switch on the accessory that holds them.
+   *
+   * They were on the lamp's own accessory until 1.1.0, which left the Home app
+   * showing the lamp as a stack of controls rather than as a light.
+   */
+  private addSwitches(accessory: PlatformAccessory): void {
+    const { Service, Characteristic } = this.platform.api.hap;
+    const wanted = new Set<string>();
+
+    if (this.config.daylightSwitch !== false) {
+      // A switch rather than a characteristic on the lightbulb: HomeKit renders
+      // only the characteristics it knows, so a custom one would be invisible in
+      // the Home app and reachable only from third-party clients.
+      // By subtype, not by type: this accessory carries more than one Switch,
+      // and a lookup by type alone would find whichever came first.
+      this.daylight =
+        accessory.getServiceById(Service.Switch, 'daylight') ??
+        accessory.addService(Service.Switch, `${this.config.name} Daylight`, 'daylight');
+      wanted.add('daylight');
+      this.name(this.daylight, 'Daylight');
+      this.daylight
+        .getCharacteristic(Characteristic.On)
+        .onGet(() => this.live(() => this.lamp.getState().daylight))
+        // Reports the mode faithfully but cannot change it; see setDaylight.
+        // The rejection is what makes the Home app put the switch back rather
+        // than leave it showing a state the lamp is not in.
+        .onSet((value) => this.handleSet('daylight mode', () => this.lamp.setDaylight(value as boolean)));
+    }
+
+    if (this.config.autoBrightnessSwitch !== false) {
+      this.autoBrightness =
+        accessory.getServiceById(Service.Switch, 'auto') ??
+        accessory.addService(Service.Switch, `${this.config.name} Auto Brightness`, 'auto');
+      wanted.add('auto');
+      this.name(this.autoBrightness, 'Auto Brightness');
+      this.autoBrightness
+        .getCharacteristic(Characteristic.On)
+        .onGet(() => this.live(() => this.lamp.getState().autoBrightness))
+        .onSet((value) => this.handleSet('auto brightness', () => this.lamp.setAutoBrightness(value as boolean)));
+    }
+
+    if (this.config.movementSwitch !== false) {
+      // Whether the lamp acts on what its sensor sees. Reading the sensor
+      // itself is not possible; see docs/PROTOCOL.md.
+      this.movement =
+        accessory.getServiceById(Service.Switch, 'movement') ??
+        accessory.addService(Service.Switch, `${this.config.name} Movement`, 'movement');
+      wanted.add('movement');
+      this.name(this.movement, 'Movement');
+      this.movement
+        .getCharacteristic(Characteristic.On)
+        .onGet(() => this.live(() => this.lamp.getState().movement))
+        .onSet((value) => this.handleSet('movement mode', () => this.lamp.setMovement(value as boolean)));
+    }
+
+    if (this.config.presetSwitches !== false) {
+      // Momentary rather than stateful. The lamp does hold a preset and reports
+      // which, but what these are for is applying a set of values — so pressing
+      // one applies it and the switch springs back, the way a scene does.
+      for (const preset of Object.keys(PRESETS) as Preset[]) {
+        // "Preset" in the name, so a momentary one is not mistaken in a list
+        // for the mode switches above it, which do hold a state.
+        const label = `${preset[0]!.toUpperCase() + preset.slice(1)} Preset`;
+        const service =
+          accessory.getServiceById(Service.Switch, preset) ??
+          accessory.addService(Service.Switch, `${this.config.name} ${label}`, preset);
+        this.name(service, label);
+        service
+          .getCharacteristic(Characteristic.On)
+          .onGet(() => false)
+          .onSet(async (value) => {
+            if (!value) {
+              return;
+            }
+            await this.handleSet(`${label} preset`, () => this.lamp.setPreset(preset));
+            this.release(service);
+          });
+        this.presets.set(preset, service);
+        wanted.add(preset);
+      }
+    }
+
+    // A switch turned off in the config has to come off the accessory, not
+    // merely stop being added — the lesson of 1.0.1, where a service nobody
+    // added any more stayed in the Home app for everyone who already had it.
+    for (const subtype of SWITCH_SUBTYPES) {
+      if (wanted.has(subtype)) {
+        continue;
+      }
+      const unwanted = accessory.getServiceById(Service.Switch, subtype);
+      if (unwanted) {
+        accessory.removeService(unwanted);
+        this.platform.log.info(`Removed the ${subtype} switch from ${this.config.name}; it is turned off in the config`);
+      }
+    }
   }
 
   async start(): Promise<void> {
@@ -207,6 +279,15 @@ export class MorphAccessory {
     setTimeout(() => {
       service.updateCharacteristic(this.platform.api.hap.Characteristic.On, false);
     }, RELEASE_MS).unref();
+  }
+
+  /** Give an accessory its Dyson identity in the Home app's details. */
+  private describe(accessory: PlatformAccessory, serial: string): void {
+    const { Service, Characteristic } = this.platform.api.hap;
+    (accessory.getService(Service.AccessoryInformation) ?? accessory.addService(Service.AccessoryInformation))
+      .setCharacteristic(Characteristic.Manufacturer, 'Dyson')
+      .setCharacteristic(Characteristic.Model, 'Solarcycle Morph')
+      .setCharacteristic(Characteristic.SerialNumber, serial);
   }
 
   /**

@@ -35,6 +35,22 @@ export interface LightConfig {
   presetSwitches?: boolean;
 }
 
+/**
+ * Whether any switch at all is wanted for this lamp.
+ *
+ * The switches live on an accessory of their own, so with every one of them
+ * turned off there is nothing for that accessory to hold and it is not
+ * registered at all.
+ */
+export function hasSwitches(light: LightConfig): boolean {
+  return (
+    light.daylightSwitch !== false ||
+    light.autoBrightnessSwitch !== false ||
+    light.movementSwitch !== false ||
+    light.presetSwitches !== false
+  );
+}
+
 /** A lamp whose credentials are known, from the config or the credential store. */
 export type ResolvedLightConfig = LightConfig & { ltk: string; accountId: string };
 

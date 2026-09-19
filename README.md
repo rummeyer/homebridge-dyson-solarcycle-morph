@@ -20,16 +20,18 @@
 ## What you get
 
 Your lamp appears in the Home app as a **light**, with the controls Apple
-provides for one:
+provides for one and nothing else on it — so the tile turns the lamp on when you
+tap it, the way a light should:
 
 - **On and off**
 - **Brightness**
 - **Colour temperature**, across the lamp's full 2700–6500 K range
 - **Siri**: *"Hey Siri, turn on the desk light"*, *"Hey Siri, set the desk light to 50%"*
 
-Alongside it, the three modes that otherwise live only on the lamp's base or in
-the MyDyson app — each a switch you can automate on, and each showing what the
-lamp is really doing rather than what was last asked of it:
+**Beside it sits a second accessory, `<name> Switches`,** holding everything
+that is a switch. The three modes that otherwise live only on the lamp's base or
+in the MyDyson app — each one automatable, and each showing what the lamp is
+really doing rather than what was last asked of it:
 
 | switch | what it does |
 | --- | --- |
@@ -37,10 +39,10 @@ lamp is really doing rather than what was last asked of it:
 | **Auto Brightness** | trims the level to suit the room as the light around it changes |
 | **Movement** | lights when it sees movement, goes out once the room has been still |
 
-Plus the lamp's three preset modes — **Study**, **Relax** and **Precision** — as
-switches that apply a set of values and spring back, the way a scene does. They
-are what the buttons in the MyDyson app do, and the lamp allows only one at a
-time.
+On the same accessory, the lamp's three preset modes — **Study**, **Relax** and
+**Precision** — as switches that apply a set of values and spring back, the way a
+scene does. They are what the buttons in the MyDyson app do, and the lamp allows
+only one at a time.
 
 | preset | where it puts the lamp |
 | --- | --- |
@@ -107,7 +109,9 @@ Restart Homebridge when the page says so.
 ## Step 4 — Add the lamp to the Home app
 
 The child bridge has its own QR code, under **Bridge Settings**. Scan it in the
-Home app the same way you paired Homebridge itself.
+Home app the same way you paired Homebridge itself. Two accessories turn up: the
+lamp, and `<name> Switches` beside it. Put them in whichever rooms suit you —
+they are independent as far as the Home app is concerned.
 
 ## Using it
 
@@ -151,6 +155,10 @@ Everything except the lights is optional.
 | **Lights → Expose movement mode** | The Movement switch. On by default |
 | **Lights → Expose the preset modes** | The Study, Relax and Precision switches. On by default |
 | **Bluetooth adapter** | Only needed if the host has more than one, e.g. `hci1` |
+
+Turning all four switches off leaves the lamp on its own: there is then nothing
+for the second accessory to hold, so it is not created, and an existing one is
+removed.
 
 ## If something goes wrong
 
