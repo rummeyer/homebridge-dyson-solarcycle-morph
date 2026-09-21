@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] — 2026-09-21
+
+### Fixed
+
+- **The settings schema declares its required fields the way JSON Schema
+  defines it.** `"required": true` sat on the individual fields, which the
+  Homebridge UI has always accepted but which is not what the keyword means:
+  in JSON Schema `required` belongs on the enclosing object and lists the names
+  of the properties it requires. The plugin name is now listed on the schema
+  itself, and a light's name, MAC address and serial on the light object. The
+  same fields are required as before.
+
 ## [1.2.1] — 2026-09-21
 
 ### Changed

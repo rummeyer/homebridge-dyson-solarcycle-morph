@@ -5,18 +5,17 @@
   "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph.\n\n**The lamp must be registered in the MyDyson app.** Its key is issued by Dyson against the account the lamp belongs to and cannot be read from the device itself.\n\nEach lamp becomes two accessories in the Home app: the light itself, and a second one holding the switches below.",
   "schema": {
     "type": "object",
+    "required": ["name"],
     "properties": {
       "name": {
         "title": "Name",
         "type": "string",
         "default": "Dyson Solarcycle Morph",
-        "required": true,
         "description": "Shown in the Homebridge log in front of this plugin\u2019s messages."
       },
       "adapter": {
         "title": "Bluetooth adapter",
         "type": "string",
-        "required": false,
         "placeholder": "hci0",
         "description": "Leave empty to use the system default adapter."
       },
@@ -25,24 +24,22 @@
         "type": "array",
         "items": {
           "type": "object",
+          "required": ["name", "mac", "serial"],
           "properties": {
             "name": {
               "title": "Name",
               "type": "string",
-              "required": true,
               "default": "Dyson Morph"
             },
             "mac": {
               "title": "BLE MAC address",
               "type": "string",
-              "required": true,
               "placeholder": "AA:BB:CC:DD:EE:FF",
               "pattern": "^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$"
             },
             "serial": {
               "title": "Serial number",
               "type": "string",
-              "required": true,
               "description": "Printed on the lamp base and shown in the MyDyson app."
             },
             "autoBrightnessSwitch": {
