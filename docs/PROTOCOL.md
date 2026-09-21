@@ -191,17 +191,23 @@ why reconciliation and write pacing exist.
 ### Attributes
 
 From the app's own table (`vc0/a.java`) and the calls that use them, with the
-value shape each one takes. Only daylight mode is decoded with confidence; the
-rest are listed as a map for later.
+value shape each one takes.
 
-Read from a CF06 on 2026-09-18, with the lamp at 120 lm / 4486 K. Only daylight
-mode is decoded; the values are recorded because they are what the lamp actually
+Read from a CF06 on 2026-09-18 with the lamp at 120 lm / 4486 K, and extended on
+2026-09-21. The values are recorded because they are what the lamp actually
 held, which is a better starting point than the shapes alone.
 
 | attribute | value read | note |
 | --- | --- | --- |
 | `0x2013` | `0` | daylight tracking |
 | `0x2026` | `0` | not auto brightness, despite the app's auto-brightness screen writing it; see below |
+| `0x2003` | `48.6719` | **latitude**, double, little-endian |
+| `0x2004` | `9.2807` | **longitude**, double, little-endian |
+| `0x2005` | `2.0` | **UTC offset in hours**, `float`, little-endian |
+| `0x201d` | `23 00 78 3c 2a 00 b4 77` | **daylight-saving rules**, 8 bytes |
+| `0x201a` | 64 bytes | **year of birth**, encrypted |
+| `0x2025` | `1768998955` | unix time, written whenever `0x201a` is |
+| `0x201b` | `1` | read by the age-adjustment screen alongside `0x201a` |
 | `0x2006` | `300` | |
 | `0x2007` | `30` | |
 | `0x2014` | `424` | |
@@ -214,16 +220,81 @@ held, which is a better starting point than the shapes alone.
 | `0x201f` | `0` | **RELAX preset** |
 | `0x2021` | `0` | **PRECISION preset** |
 | `0x2009` `0x200b` `0x200d` `0x201c` `0x2029` `0x2032` | `0` | flags |
-| `0x200a` `0x201b` | `1` | flags |
-| `0x2003` `0x2004` | 8 bytes | doubles; `0x2003` and `0x2004` look like a latitude and longitude |
-| `0x201d` | 8 bytes | |
-| `0x2005` `0x2025` `0x2028` `0x2030` `0x2031` | 4 bytes | |
-| `0x201a` | write-only, 64 bytes | |
+| `0x200a` | `1` | flag |
+| `0x2028` `0x2030` `0x2031` | 4 bytes | |
 
 Everything else in `0x2000`–`0x2040` returns nothing.
 
 Three of those attributes are the lamp's preset modes; see
 [Preset modes](#preset-modes).
+
+### Where the lamp thinks it is
+
+Daylight tracking needs sunrise and sunset, and the lamp works those out from a
+latitude in `0x2003` and a longitude in `0x2004`. Both are IEEE-754 doubles
+written little-endian: `pd0/b.java` and `pd0/c.java` build one with
+`ByteBuffer.putDouble`, which is big-endian, and then reverse the array through
+`bm0/c.java`'s `j()`.
+
+```
+0x2003  58 17 b7 d1 00 56 48 40   48.671899999999994
+0x2004  71 f9 0f e9 b7 8f 22 40    9.280699999999998
+```
+
+Neither is exactly the tidy decimal it looks like — each sits one unit in the
+last place below it — because the app writes whatever `Location.getLatitude()`
+handed it, never a parsed string. Anything comparing coordinates has to allow a
+tolerance or it will rewrite the lamp forever.
+
+The app writes the two 300 ms apart (`md0/l.java`), where it spaces most other
+messages by less.
+
+**The app has exactly one source for them: the phone's GPS.** The city it
+displays is produced afterwards by reverse-geocoding the coordinates through
+Android's own `Geocoder` (`sc0/a.java`), taking the first non-empty of
+thoroughfare, sub-locality, locality; the result is a `{ name, latitude,
+longitude, countryCode }` record (`sc0/c.java`). There is no search in the other
+direction — `getFromLocationName` appears nowhere in the APK — so a place name
+is a label on coordinates the app already has, never a way to obtain them.
+
+Two neighbours belong to the same setting. `0x2005` is the UTC offset in hours
+as a little-endian `float` (`pd0/d.java`); `2.0` was read during German summer
+time. `0x201d` carries the daylight-saving rules in eight bytes (`pd0/a.java`):
+start rule and month packed into one byte, start date, start time in minutes,
+the adjustment in minutes, then the same three for the end, and finally the two
+days of the week packed together. The `23 00 78 3c 2a 00 b4 77` above is the EU
+rule — last Sunday in March at 02:00, plus 60 minutes, last Sunday in October
+at 03:00.
+
+### Year of birth
+
+The lamp's age adjustment stores a **year only** — the app's screen is a number
+picker labelled `light_configurationYearOfBirth`, with no day or month anywhere
+near it. It lives in `0x201a` as 64 bytes, encrypted, and is the only setting on
+this lamp that is.
+
+The key is not the one the handshake uses. Both come from the same HKDF-SHA256
+over the LTK, with the same empty salt and the same single expansion block
+truncated to 16 bytes, but a different `info` string: `SENSITIVE_STATE\0` here
+against `USER_AUTH_AES\0\0\0` for authentication (`q50/a.java`'s static
+initialiser). The sealing is the protocol's usual encrypt-then-MAC — the same
+`IV(16) || ciphertext || HMAC-SHA256(ciphertext)(32)` as PayloadA — over a
+16-byte plaintext built by `je0/a.java`:
+
+```
+uint16 LE year || 14 zero bytes
+```
+
+Read back, the third byte of the plaintext is a status the app logs by name
+(`bd0/c.java`): `0` the year is good, `1` "GUID comparison failed" — another
+account set it — and `2` "age not set", both of which come with a year of zero.
+
+Writing it also sets `0x2025` to the current unix time as a little-endian
+`uint32` (`he0/u.java`'s `x()`), so the lamp knows when the answer was given.
+
+Verified against a CF06 on 2026-09-21: the blob decrypted to year `1974` with
+status `0` and a matching MAC, which is what the lamp had been told through the
+app in January.
 
 ## What the MyDyson app does
 
@@ -246,6 +317,13 @@ rather than addresses.
 | `he0/a0.java`, `he0/x.java` | attribute read: `0x90` |
 | `nd0/e.java` | `DELAY_BETWEEN_WRITING_MESSAGES_MILLS` |
 | `com/dyson/mobile/android/light/control/e.java` | the light modes, with their colour temperature and brightness |
+| `pd0/b.java`, `pd0/c.java` | latitude and longitude as little-endian doubles |
+| `pd0/d.java`, `pd0/a.java` | the UTC offset, and the daylight-saving rules |
+| `md0/i.java`, `md0/l.java` | where the app gets a location, and what it does with one |
+| `sc0/a.java`, `sc0/c.java` | turning coordinates into the place name the app displays |
+| `je0/a.java`, `bd0/f.java`, `bd0/c.java` | the year of birth: sealing it, reading it back, its status byte |
+| `q50/a.java` | the `SENSITIVE_STATE` HKDF info, and where the LTK is kept |
+| `t50/a.java`, `t50/b.java`, `t50/c.java` | the cipher, the HKDF, and encrypt-then-MAC |
 
 `b50/c.java` is the useful one for orientation: it routes each message type to a
 characteristic, which is how the two channels separate.

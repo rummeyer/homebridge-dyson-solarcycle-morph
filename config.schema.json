@@ -60,6 +60,22 @@
               "default": true,
               "description": "Adds the lamp's Study, Relax and Precision modes as switches. Only one can be on at a time, which the lamp itself enforces."
             },
+            "latitude": {
+              "title": "Latitude",
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90,
+              "placeholder": "48.6719",
+              "description": "Decimal degrees. The lamp works out sunrise and sunset from this, which is what daylight tracking follows."
+            },
+            "longitude": {
+              "title": "Longitude",
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180,
+              "placeholder": "9.2807",
+              "description": "Decimal degrees. Set both or neither \u2014 a lamp is not told half a location."
+            },
             "daylightSwitch": {
               "title": "Expose daylight tracking",
               "type": "boolean",
@@ -114,6 +130,8 @@
                 "lights[].name",
                 "lights[].mac",
                 "lights[].serial",
+                "lights[].latitude",
+                "lights[].longitude",
                 "lights[].daylightSwitch",
                 "lights[].autoBrightnessSwitch",
                 "lights[].movementSwitch",

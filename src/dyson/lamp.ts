@@ -30,6 +30,8 @@ import {
   CHAR_POWER,
   CHAR_RSSI,
   CHAR_WRITE_ATTR,
+  buildCoordinateRead,
+  buildCoordinateWrite,
   buildDaylightRead,
   buildDaylightWrite,
   buildPresetRead,
@@ -37,7 +39,9 @@ import {
   PRESETS,
   decodeAttributeReport,
   decodeAttributeValue,
+  decodeCoordinateValue,
   DysonMessage,
+  Coordinate,
   MAX_KELVIN,
   MessageAssembler,
   MIN_KELVIN,
@@ -159,6 +163,33 @@ const SETTLE_MS = 3_000;
  */
 const POLL_INTERVAL_MS = 60_000;
 
+/**
+ * How long to wait for the lamp to answer a question on the attribute channel.
+ *
+ * Generous because nothing is blocked on it: the coordinates are read once per
+ * connection, and a question that goes unanswered only means the location is
+ * left as it is.
+ */
+const ATTRIBUTE_REPLY_MS = 2_000;
+
+/**
+ * Spacing between the two coordinate writes.
+ *
+ * The MyDyson app waits 300 ms between them (`md0/l.java`) where it spaces most
+ * other writes by less, and a location half-applied would aim the lamp's
+ * daylight tracking at somewhere nobody is. Matching the app is cheap here.
+ */
+const COORDINATE_WRITE_GAP_MS = 300;
+
+/**
+ * How close two coordinates must be to count as the same place.
+ *
+ * A millionth of a degree is about 10 cm, far below anything a phone's GPS or a
+ * map lookup can tell apart. Comparing the doubles exactly would rewrite the
+ * lamp on every connection over a value that only differs in its last bit.
+ */
+const COORDINATE_EPSILON = 1e-6;
+
 /** Attempts at subscribing to a characteristic before falling back to the poll. */
 const SUBSCRIBE_ATTEMPTS = 3;
 const SUBSCRIBE_RETRY_MS = 500;
@@ -195,6 +226,12 @@ export interface LampState {
   preset: Preset | 'none';
 }
 
+/** Where the lamp is, in decimal degrees. */
+export interface LampLocation {
+  latitude: number;
+  longitude: number;
+}
+
 export interface LampOptions {
   /** BLE MAC, e.g. `AA:BB:CC:DD:EE:FF`. */
   mac: string;
@@ -204,6 +241,12 @@ export interface LampOptions {
   accountId: string;
   /** Optional HCI adapter name, e.g. `hci0`. Defaults to the system default. */
   adapter?: string;
+  /**
+   * Where the lamp stands. Put into the lamp on connecting when it does not
+   * already hold it; left alone entirely when absent, since a lamp set up
+   * through the MyDyson app already knows.
+   */
+  location?: LampLocation;
   log?: Logger;
 }
 
@@ -232,6 +275,7 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly aesKey: Buffer;
   private readonly accountId: string;
   private readonly adapterName: string | undefined;
+  private readonly location: LampLocation | undefined;
   private readonly log: Logger;
 
   private bluetooth?: ReturnType<typeof createBluetooth>;
@@ -243,6 +287,8 @@ export class DysonMorphLamp extends EventEmitter {
 
   private readonly assembler = new MessageAssembler();
   private readonly waiters = new Map<number, (message: DysonMessage) => void>();
+  /** Outstanding coordinate questions, answered on the attribute channel. */
+  private readonly coordinateWaiters = new Map<Coordinate, (degrees: number) => void>();
 
   /** Serialises all GATT access. */
   private readonly operations = new OperationQueue();
@@ -295,6 +341,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.aesKey = deriveAesKey(Buffer.from(options.ltk.replace(/[^0-9a-fA-F]/g, ''), 'hex'));
     this.accountId = options.accountId;
     this.adapterName = options.adapter;
+    this.location = options.location;
     this.log = options.log ?? noopLog;
   }
 
@@ -600,6 +647,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.desired = { ...this.state };
     await this.subscribeToState();
     await this.readDaylight();
+    await this.syncLocation();
     await this.subscribeToSignal();
     this.startPolling();
     const rssi = this.lastRssi;
@@ -828,6 +876,95 @@ export class DysonMorphLamp extends EventEmitter {
     }
   }
 
+  /**
+   * Make sure the lamp knows where it is.
+   *
+   * The lamp turns its coordinates into sunrise and sunset, and daylight
+   * tracking follows those, so a lamp with the wrong location tracks the wrong
+   * day. They are normally set once by the MyDyson app from the phone's GPS and
+   * then never revisited — including after the lamp moves house.
+   *
+   * Read first, write only on a difference: these are settings rather than
+   * controls, and rewriting them every connection would be churn on a channel
+   * shared with the mode switches.
+   */
+  private async syncLocation(): Promise<void> {
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+    const current = {
+      latitude: await this.readCoordinate('latitude'),
+      longitude: await this.readCoordinate('longitude'),
+    };
+    if (current.latitude !== undefined && current.longitude !== undefined) {
+      this.log.debug(`Lamp ${this.mac} places itself at ${describeLocation(current as LampLocation)}`);
+    }
+
+    const wanted = this.location;
+    if (!wanted) {
+      return;
+    }
+    const settled =
+      current.latitude !== undefined &&
+      current.longitude !== undefined &&
+      Math.abs(current.latitude - wanted.latitude) < COORDINATE_EPSILON &&
+      Math.abs(current.longitude - wanted.longitude) < COORDINATE_EPSILON;
+    if (settled) {
+      return;
+    }
+
+    try {
+      await this.enqueue(async () => {
+        for (const fragment of buildCoordinateWrite('latitude', wanted.latitude)) {
+          await this.write(CHAR_WRITE_ATTR, fragment);
+        }
+        await sleep(COORDINATE_WRITE_GAP_MS);
+        for (const fragment of buildCoordinateWrite('longitude', wanted.longitude)) {
+          await this.write(CHAR_WRITE_ATTR, fragment);
+        }
+      });
+    } catch (error) {
+      this.log.warn(`Could not set the location of ${this.mac}: ${describeError(error)}`);
+      return;
+    }
+
+    const was =
+      current.latitude !== undefined && current.longitude !== undefined
+        ? ` (was ${describeLocation(current as LampLocation)})`
+        : '';
+    this.log.info(`Location of ${this.mac} set to ${describeLocation(wanted)}${was}`);
+  }
+
+  /**
+   * Ask the lamp for one coordinate.
+   *
+   * @returns The value in degrees, or `undefined` if the lamp did not answer —
+   * which is not an error worth raising, only a reason to leave the setting be.
+   */
+  private async readCoordinate(coordinate: Coordinate): Promise<number | undefined> {
+    const answer = new Promise<number | undefined>((resolve) => {
+      const timer = setTimeout(() => {
+        this.coordinateWaiters.delete(coordinate);
+        this.log.debug(`No answer from ${this.mac} about its ${coordinate}`);
+        resolve(undefined);
+      }, ATTRIBUTE_REPLY_MS);
+      this.coordinateWaiters.set(coordinate, (degrees) => {
+        clearTimeout(timer);
+        this.coordinateWaiters.delete(coordinate);
+        resolve(degrees);
+      });
+    });
+
+    try {
+      for (const fragment of buildCoordinateRead(coordinate)) {
+        await this.write(CHAR_WRITE_ATTR, fragment);
+      }
+    } catch (error) {
+      this.log.debug(`Could not ask for the ${coordinate}: ${describeError(error)}`);
+    }
+    return answer;
+  }
+
   private async refreshState(): Promise<void> {
     this.patchState(await this.readState());
   }
@@ -1001,6 +1138,14 @@ export class DysonMorphLamp extends EventEmitter {
           // and a report that arrives but says nothing looks exactly like one
           // that never arrived.
           this.log.debug(`Attribute report ${value.toString('hex')}`);
+          // Coordinates share this channel but are not lamp state — HomeKit has
+          // nothing to show for them — so they go to whoever asked and no
+          // further.
+          const coordinate = decodeCoordinateValue(value);
+          if (coordinate) {
+            this.coordinateWaiters.get(coordinate.coordinate)?.(coordinate.degrees);
+            return undefined;
+          }
           const report = decodeAttributeReport(value) ?? decodeAttributeValue(value);
           if (!report) {
             return undefined;
@@ -1190,6 +1335,16 @@ export function describeState(state: LampState): string {
     state.preset !== 'none' ? state.preset : '',
   ].filter(Boolean);
   return [state.on ? 'on' : 'off', `${state.brightness}%`, `${state.kelvin}K`, ...modes].join(', ');
+}
+
+/**
+ * Render a location for the log.
+ *
+ * Five decimal places is about a metre, which is as fine as the lamp's own use
+ * of it — sunrise and sunset — can possibly care about.
+ */
+function describeLocation(location: LampLocation): string {
+  return `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
 }
 
 function sleep(ms: number): Promise<void> {

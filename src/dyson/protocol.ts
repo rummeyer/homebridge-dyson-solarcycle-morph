@@ -120,6 +120,67 @@ export const PRESETS = {
 export type Preset = keyof typeof PRESETS;
 
 /**
+ * Where the lamp believes it is, attributes `0x2003` and `0x2004`.
+ *
+ * Daylight tracking works from sunrise and sunset, and the lamp computes those
+ * from these two numbers — without them it has nothing to track. Each is an
+ * IEEE-754 double in little-endian order: the app builds one with
+ * `ByteBuffer.putDouble`, which is big-endian, and then reverses the array
+ * (`pd0/b.java`, `pd0/c.java`, `bm0/c.java`'s `j()`).
+ *
+ * The MyDyson app only ever fills these from the phone's own GPS
+ * (`md0/i.java`) and offers no way to type them in, which is why the plugin
+ * takes them from its configuration instead.
+ */
+export const COORDINATES = {
+  latitude: 0x2003,
+  longitude: 0x2004,
+} as const;
+
+export type Coordinate = keyof typeof COORDINATES;
+
+/** Ask the lamp for one of its coordinates. */
+export function buildCoordinateRead(coordinate: Coordinate): Buffer[] {
+  const body = Buffer.alloc(2);
+  body.writeUInt16LE(COORDINATES[coordinate], 0);
+  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
+}
+
+/** Set one of the lamp's coordinates, in degrees. */
+export function buildCoordinateWrite(coordinate: Coordinate, degrees: number): Buffer[] {
+  const value = Buffer.alloc(8);
+  value.writeDoubleLE(degrees, 0);
+  return buildAttributeWrite(COORDINATES[coordinate], value);
+}
+
+/**
+ * Read the answer to {@link buildCoordinateRead}.
+ *
+ * Same frame as {@link decodeAttributeValue} — `attribute(2) || status ||
+ * length(2) || value` — but the value is eight bytes rather than one, so the
+ * two cannot share a decoder.
+ */
+export function decodeCoordinateValue(
+  buffer: Buffer,
+): { coordinate: Coordinate; degrees: number } | undefined {
+  // header, type, attribute (2), status, length (2), value (8)
+  if (buffer.length < 15) {
+    return undefined;
+  }
+  if ((buffer[0]! & 0x80) === 0 || buffer[1] !== MsgType.ATTRIBUTE_VALUE) {
+    return undefined;
+  }
+  if (buffer[4] !== 0x00 || buffer.readUInt16LE(5) !== 8) {
+    return undefined;
+  }
+  const attribute = buffer.readUInt16LE(2);
+  const coordinate = (Object.keys(COORDINATES) as Coordinate[]).find(
+    (name) => COORDINATES[name] === attribute,
+  );
+  return coordinate ? { coordinate, degrees: buffer.readDoubleLE(7) } : undefined;
+}
+
+/**
  * Build an attribute write: `attribute(2) || length(2) || value`, framed.
  *
  * Both lengths are little-endian, matching every other multi-byte value here.

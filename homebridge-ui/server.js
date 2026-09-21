@@ -25,6 +25,44 @@ const SERIAL_PATTERN = /^[A-Z0-9]{3}-[A-Z]{2}-[A-Z0-9]{6,}$/;
 /** How long to leave BLE discovery running before reporting what turned up. */
 const SCAN_MS = 12_000;
 
+/**
+ * Where to ask what part of the world this machine is in.
+ *
+ * The settings page prefers the browser's own geolocation and only falls back
+ * to these, because a browser knows where the person is while these know where
+ * their internet connection comes out — behind a VPN those are different
+ * continents. The fallback exists because geolocation needs a secure context
+ * and the Homebridge UI is usually served over plain HTTP on a local address,
+ * which leaves most installations with no other way to answer the question.
+ *
+ * Nothing about the household is sent: the request carries no body, and the
+ * service reads the public address it arrives from, which every site the
+ * machine contacts already sees.
+ *
+ * Two of them, tried in order, because these services are free and rate-limit
+ * accordingly — a first attempt from this Raspberry Pi was refused outright by
+ * a third one, and a button that depends on a single anonymous quota is a
+ * button that stops working without notice.
+ */
+const GEOIP_SERVICES = [
+  {
+    url: 'https://ipwho.is/',
+    parse: (body) => (body?.success === false ? undefined : body),
+  },
+  {
+    // Answers with the coordinates as strings, and adds its own estimate of how
+    // far off it might be, in kilometres.
+    url: 'https://get.geojs.io/v1/ip/geo.json',
+    parse: (body) => ({
+      latitude: Number(body?.latitude),
+      longitude: Number(body?.longitude),
+      city: body?.city,
+      country: body?.country,
+    }),
+  },
+];
+const GEOIP_TIMEOUT_MS = 10_000;
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 class MorphUiServer extends HomebridgePluginUiServer {
@@ -44,6 +82,7 @@ class MorphUiServer extends HomebridgePluginUiServer {
     this.onRequest('/pair', (r) => this.pair(r));
     this.onRequest('/pair-status', (r) => this.pairStatus(r));
     this.onRequest('/forget', (r) => this.forget(r));
+    this.onRequest('/locate', () => this.locate());
     this.onRequest('/sign-out', (r) => this.signOut(r));
 
     this.ready();
@@ -198,6 +237,51 @@ class MorphUiServer extends HomebridgePluginUiServer {
           : `Could not fetch the key for ${serial}: ${describeError(err)}`,
       );
     }
+  }
+
+  /**
+   * Work out roughly where this machine is, from its public address.
+   *
+   * Roughly is enough. The lamp turns coordinates into sunrise and sunset, and
+   * a degree of longitude is four minutes of it, so a reading good to the
+   * nearest city is good to a couple of minutes of daylight — far inside what
+   * anyone notices in a lamp that fades over the hour.
+   */
+  async locate() {
+    const failures = [];
+    for (const service of GEOIP_SERVICES) {
+      try {
+        const response = await fetch(service.url, {
+          headers: { Accept: 'application/json', 'User-Agent': `${PLUGIN_NAME} (homebridge plugin)` },
+          signal: AbortSignal.timeout(GEOIP_TIMEOUT_MS),
+        });
+        if (!response.ok) {
+          throw new Error(`${response.status} ${response.statusText}`);
+        }
+        // These services answer 200 with an error object when they are rate
+        // limiting or cannot place the address, so the status code alone does
+        // not settle whether there is an answer in there.
+        const placed = service.parse(await response.json());
+        const { latitude, longitude } = placed ?? {};
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+          throw new Error('answered without a position');
+        }
+        return {
+          latitude,
+          longitude,
+          // Named the way the MyDyson app names a location: the coordinates are
+          // what the lamp is told, and the place is there so someone can see at
+          // a glance whether the lookup landed anywhere near them.
+          place: [placed.city, placed.country].filter((part) => typeof part === 'string' && part).join(', '),
+        };
+      } catch (err) {
+        failures.push(`${new URL(service.url).hostname}: ${describeError(err)}`);
+      }
+    }
+    throw new RequestError(
+      `Could not look up where this machine is (${failures.join('; ')}). ` +
+        'Enter the coordinates by hand instead.',
+    );
   }
 
   /** Discard the stored session, e.g. to authorise as a different account. */

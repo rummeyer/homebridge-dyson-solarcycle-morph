@@ -33,6 +33,16 @@ export interface LightConfig {
    * Expose the lamp's preset modes as switches. On by default.
    */
   presetSwitches?: boolean;
+  /**
+   * Where the lamp is, in decimal degrees. Both or neither.
+   *
+   * The lamp works out sunrise and sunset from these, which is what daylight
+   * tracking follows. The MyDyson app sets them from the phone's GPS when the
+   * lamp is first configured, so an existing lamp already has them; these exist
+   * to set them without the app, and to correct them after a move.
+   */
+  latitude?: number;
+  longitude?: number;
 }
 
 /**
@@ -105,6 +115,18 @@ export function validateLightConfig(light: Partial<LightConfig>, index: number):
   }
   if ((light.ltk === undefined) !== (light.accountId === undefined)) {
     problems.push(`${where} sets only one of ltk/accountId — supply both to override the stored credentials, or neither`);
+  }
+  // A lamp told only its latitude would place itself on the Greenwich meridian
+  // and track the wrong sunset all year, so half a location is refused rather
+  // than half-applied.
+  if ((light.latitude === undefined) !== (light.longitude === undefined)) {
+    problems.push(`${where} sets only one of latitude/longitude — supply both, or neither`);
+  }
+  for (const [field, limit] of [['latitude', 90], ['longitude', 180]] as const) {
+    const value = light[field];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > limit)) {
+      problems.push(`${where}.${field} must be a number between -${limit} and ${limit} (got ${JSON.stringify(value)})`);
+    }
   }
   return problems;
 }

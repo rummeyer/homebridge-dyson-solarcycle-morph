@@ -64,6 +64,12 @@ export class MorphAccessory {
       ltk: config.ltk,
       accountId: config.accountId,
       adapter: platform.config.adapter,
+      // Both or neither: validation refuses half a location, so one of them
+      // being present means the other is too.
+      location:
+        config.latitude !== undefined && config.longitude !== undefined
+          ? { latitude: config.latitude, longitude: config.longitude }
+          : undefined,
       log: platform.log,
     });
 

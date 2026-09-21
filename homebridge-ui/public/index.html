@@ -92,6 +92,28 @@
       <div id="morph-status">…</div>
     </div>
   </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">3. Where your lights are</h5>
+      <p class="card-text text-muted small">
+        A lamp works out sunrise and sunset from its coordinates, and daylight tracking follows
+        those. The MyDyson app sets them once from the phone it was set up on, so a lamp added
+        there already knows — this is for setting them without the app, and for correcting them
+        after the lamp moves. The fields are under each light below; this fills them in.
+      </p>
+      <p class="card-text text-muted small">
+        Your browser is asked first, and only answers over HTTPS. Otherwise the coordinates are
+        looked up from the address this machine reaches the internet from, through
+        <a href="https://ipwho.is" target="_blank" rel="noreferrer">ipwho.is</a> or
+        <a href="https://geojs.io" target="_blank" rel="noreferrer">geojs.io</a> — accurate to
+        the nearest town, which is all a sunrise needs, and wrong if you are behind a VPN.
+        Check what it filled in before saving.
+      </p>
+      <button type="button" class="btn btn-secondary" id="morph-locate">Use my current location</button>
+      <div id="morph-location" class="morph-msg morph-hidden"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -365,6 +387,96 @@
     show(message, 'success');
     await refreshStatus();
   }
+
+  /**
+   * Ask the browser where it is.
+   *
+   * Geolocation is only offered in a secure context, and the Homebridge UI is
+   * usually served over plain HTTP on a local address, so for most people this
+   * is unavailable rather than merely unanswered. Refusing and being unable to
+   * ask are told apart on the way out: one is a decision to respect, the other
+   * is a reason to look elsewhere.
+   */
+  function browserLocation() {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation || !window.isSecureContext) {
+        reject(Object.assign(new Error('this page is not served over HTTPS'), { unavailable: true }));
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(
+        ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy }),
+        (error) => reject(
+          error.code === error.PERMISSION_DENIED
+            ? new Error('Your browser refused to share your location. Allow it for this page, or type the coordinates in below.')
+            : Object.assign(new Error(error.message), { unavailable: true }),
+        ),
+        { timeout: 15_000, maximumAge: 0 },
+      );
+    });
+  }
+
+  const showLocation = (text, kind) => {
+    $('morph-location').textContent = text;
+    $('morph-location').className = `alert morph-msg alert-${kind}`;
+  };
+
+  /**
+   * Put a position into every configured light.
+   *
+   * Every light, because the alternative is asking which one and the answer is
+   * almost always "all of them" — they are lamps in one home, and the button
+   * exists to save typing the same numbers twice.
+   */
+  $('morph-locate').addEventListener('click', () => void busy($('morph-locate'), async () => {
+    const configs = await readConfig();
+    const lights = configs[0].lights;
+    if (lights.length === 0) {
+      showLocation('Add a light first — there is nothing to put a location on yet.', 'warning');
+      return;
+    }
+
+    let position;
+    let how;
+    try {
+      position = await browserLocation();
+      how = Number.isFinite(position.accuracy)
+        ? `, from this browser, accurate to about ${Math.round(position.accuracy)} m`
+        : ', from this browser';
+    } catch (fromBrowser) {
+      // A refusal is an answer; anything else means the question could not be
+      // put, and then the address this machine talks to the internet from is
+      // the next best thing.
+      if (!fromBrowser.unavailable) {
+        showLocation(fromBrowser.message, 'warning');
+        return;
+      }
+      try {
+        position = await homebridge.request('/locate');
+        how = position.place
+          ? `, looked up from this machine's internet connection, which comes out in ${position.place}`
+          : ", looked up from this machine's internet connection";
+      } catch (fromLookup) {
+        showLocation(`${fromLookup.message} (${fromBrowser.message})`, 'warning');
+        return;
+      }
+    }
+
+    // Six decimals is about 10 cm, far past what a lamp does with it, and it
+    // keeps config.json readable.
+    const latitude = Number(position.latitude.toFixed(6));
+    const longitude = Number(position.longitude.toFixed(6));
+    for (const light of lights) {
+      light.latitude = latitude;
+      light.longitude = longitude;
+    }
+    await homebridge.updatePluginConfig(configs);
+
+    const many = lights.length === 1 ? 'your light' : `all ${lights.length} lights`;
+    showLocation(
+      `Set ${many} to ${latitude}, ${longitude}${how}. Check it looks right below, then press Save and restart Homebridge.`,
+      'success',
+    );
+  }));
 
   $('morph-again').addEventListener('click', () => {
     clearMessage();

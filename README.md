@@ -150,6 +150,7 @@ Everything except the lights is optional.
 | **Lights → Name** | What the lamp is called in the Home app |
 | **Lights → BLE MAC address** | Filled in by the scan |
 | **Lights → Serial number** | Filled in by the scan. Identifies the accessory, so changing it creates a new one |
+| **Lights → Latitude**, **Longitude** | Where the lamp stands, in decimal degrees. Optional; set both or neither |
 | **Lights → Expose daylight tracking** | The Daylight switch. On by default |
 | **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
 | **Lights → Expose movement mode** | The Movement switch. On by default |
@@ -159,6 +160,39 @@ Everything except the lights is optional.
 Turning all four switches off leaves the lamp on its own: there is then nothing
 for the second accessory to hold, so it is not created, and an existing one is
 removed.
+
+### Where the lamp is
+
+Daylight tracking follows sunrise and sunset, and the lamp works those out from
+its coordinates. The MyDyson app sets them once, from the GPS of the phone the
+lamp was set up on, and never asks again — so a lamp added through the app
+already knows, and one that has moved house still believes it is at the old
+address.
+
+The two fields exist to set the coordinates without the app, and to correct them
+afterwards. Leave them empty and the plugin does not touch what the lamp holds —
+it still reads them on connecting and puts them in the debug log, which is the
+way to find out what the app put there:
+
+```
+Lamp F0:B1:A7:75:B1:D1 places itself at 48.67190, 9.28070
+```
+
+Fill them in and it writes yours whenever the lamp disagrees, and says so:
+
+```
+Location of F0:B1:A7:75:B1:D1 set to 48.67190, 9.28070 (was 50.11090, 8.68210)
+```
+
+**Use my current location** on the settings page fills both fields in for every
+light. It asks your browser first, which only answers on a page served over
+HTTPS — the Homebridge UI is usually plain HTTP, and then the coordinates are
+looked up instead from the address this machine reaches the internet from,
+through [ipwho.is](https://ipwho.is) or [geojs.io](https://geojs.io). That is
+accurate to the nearest town, which is all a sunrise needs, and wrong if the
+connection goes out through a VPN. Nothing is sent to either service: they read
+the public address the request arrives from, which is what every site this
+machine contacts already sees. Check what it filled in before saving.
 
 ## If something goes wrong
 

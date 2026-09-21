@@ -5,6 +5,26 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The lamp can be told where it is.** Each light takes a latitude and a
+  longitude, and the plugin puts them in the lamp when they are not already
+  there. This is what daylight tracking runs on: the lamp turns coordinates
+  into sunrise and sunset and follows those. The MyDyson app sets them once
+  from the GPS of the phone the lamp was set up on and never asks again, so a
+  lamp that has moved house goes on tracking the daylight of the old one. Leave
+  the fields empty and nothing is written.
+
+- **A *Use my current location* button on the settings page**, which fills both
+  fields in for every light. Your browser is asked first and only answers over
+  HTTPS; since the Homebridge UI is usually served over plain HTTP, the
+  coordinates are otherwise looked up from the address the machine reaches the
+  internet from. That is accurate to the nearest town — a degree of longitude
+  is four minutes of sunrise — and wrong behind a VPN, so what it fills in is
+  worth a glance before saving.
+
 ## [1.3.1] — 2026-09-21
 
 ### Changed
