@@ -5,7 +5,7 @@ import {
   COORDINATES,
   MsgType,
   attributeValue,
-  buildCoordinateRead,
+  buildAttributeRead,
   buildCoordinateWrite,
 } from '../src/dyson/protocol.ts';
 import { validateLightConfig } from '../src/config.ts';
@@ -60,7 +60,7 @@ test('a typed decimal is the same place as the lamp\u2019s own reading', () => {
 });
 
 test('a coordinate read asks for the right attribute', () => {
-  const [fragment] = buildCoordinateRead('longitude');
+  const [fragment] = buildAttributeRead(COORDINATES.longitude);
   assert.equal(fragment!.length, 4);
   assert.equal(fragment![1], MsgType.ATTRIBUTE_GET);
   assert.equal(fragment!.readUInt16LE(2), COORDINATES.longitude);

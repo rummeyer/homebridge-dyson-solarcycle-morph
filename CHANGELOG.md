@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Housekeeping, no behaviour change.** Five functions for asking the lamp
+  about an attribute differed only in which id they named, and are now one. The
+  read that goes with them took the question and the attribute to wait for as
+  separate arguments, which could disagree and then quietly wait out its
+  timeout; it now builds the question from the attribute. A constant for the
+  `2dd11008` characteristic went too: nothing discovered or subscribed to it,
+  and its description still called it motion, which this lamp disproved before
+  1.0.0.
+
 ## [1.4.0] — 2026-09-21
 
 ### Added

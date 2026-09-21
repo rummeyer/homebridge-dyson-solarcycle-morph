@@ -7,7 +7,7 @@ import {
   MIN_KELVIN,
   MIN_LUMENS,
   buildAttributeWrite,
-  buildDaylightRead,
+  buildAttributeRead,
   buildDaylightWrite,
   decodeAttributeReport,
   decodeAttributeValue,
@@ -132,7 +132,7 @@ test('a command is not mistaken for a report', () => {
 });
 
 test('the lamp can be asked for the daylight mode', () => {
-  assert.deepEqual(buildDaylightRead(), [Buffer.from([0x80, 0x90, 0x13, 0x20])]);
+  assert.deepEqual(buildAttributeRead(0x2013), [Buffer.from([0x80, 0x90, 0x13, 0x20])]);
 });
 
 test('the answer to that question is decoded', () => {

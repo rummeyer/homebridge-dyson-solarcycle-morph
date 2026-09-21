@@ -39,20 +39,17 @@ import {
   CHAR_RSSI,
   CHAR_WRITE_ATTR,
   attributeValue,
-  buildAgeAdjustRead,
   buildAgeAdjustWrite,
-  buildCoordinateRead,
+  buildAttributeRead,
   buildCoordinateWrite,
-  buildDaylightRead,
   buildDaylightWrite,
-  buildPresetRead,
   buildPresetWrite,
-  buildYearOfBirthRead,
   buildYearOfBirthSetAt,
   buildYearOfBirthWrite,
   decodeYearOfBirth,
   encodeYearOfBirth,
   ATTR_AGE_ADJUST,
+  ATTR_DAYLIGHT,
   ATTR_YEAR_OF_BIRTH,
   ATTR_YEAR_OF_BIRTH_SET_AT,
   COORDINATES,
@@ -952,9 +949,8 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
     try {
-      const asks = [buildDaylightRead(), ...Object.keys(PRESETS).map((p) => buildPresetRead(p as Preset))];
-      for (const ask of asks) {
-        await this.writeMessage(CHAR_WRITE_ATTR, ask);
+      for (const attribute of [ATTR_DAYLIGHT, ...Object.values(PRESETS)]) {
+        await this.writeMessage(CHAR_WRITE_ATTR, buildAttributeRead(attribute));
       }
     } catch (error) {
       this.log.debug(`Could not ask for the daylight mode: ${describeError(error)}`);
@@ -1084,7 +1080,7 @@ export class DysonMorphLamp extends EventEmitter {
       }
     }
 
-    const flag = await this.readAttribute(ATTR_AGE_ADJUST, buildAgeAdjustRead(), 'age adjustment');
+    const flag = await this.readAttribute(ATTR_AGE_ADJUST, 'age adjustment');
     const on = flag?.length ? flag[0] !== 0 : undefined;
     if (on === wanted.enabled) {
       return;
@@ -1103,7 +1099,7 @@ export class DysonMorphLamp extends EventEmitter {
 
   /** Read and unseal the lamp's year of birth. */
   private async readYearOfBirth(): Promise<YearOfBirth | undefined> {
-    const sealed = await this.readAttribute(ATTR_YEAR_OF_BIRTH, buildYearOfBirthRead(), 'year of birth');
+    const sealed = await this.readAttribute(ATTR_YEAR_OF_BIRTH, 'year of birth');
     if (!sealed) {
       return undefined;
     }
@@ -1124,7 +1120,7 @@ export class DysonMorphLamp extends EventEmitter {
    * not answer it — neither of which is an error worth raising, only a reason
    * to leave the setting alone.
    */
-  private async readAttribute(attribute: number, ask: Buffer[], label: string): Promise<Buffer | undefined> {
+  private async readAttribute(attribute: number, label: string): Promise<Buffer | undefined> {
     const answer = new Promise<Buffer | undefined>((resolve) => {
       const timer = setTimeout(() => {
         this.attributeWaiters.delete(attribute);
@@ -1139,7 +1135,7 @@ export class DysonMorphLamp extends EventEmitter {
     });
 
     try {
-      await this.writeMessage(CHAR_WRITE_ATTR, ask);
+      await this.writeMessage(CHAR_WRITE_ATTR, buildAttributeRead(attribute));
     } catch (error) {
       this.log.debug(`Could not ask for the ${label}: ${describeError(error)}`);
     }
@@ -1203,11 +1199,7 @@ export class DysonMorphLamp extends EventEmitter {
 
   /** Ask the lamp for one coordinate, in degrees. */
   private async readCoordinate(coordinate: Coordinate): Promise<number | undefined> {
-    const value = await this.readAttribute(
-      COORDINATES[coordinate],
-      buildCoordinateRead(coordinate),
-      coordinate,
-    );
+    const value = await this.readAttribute(COORDINATES[coordinate], coordinate);
     return value?.length === 8 ? value.readDoubleLE(0) : undefined;
   }
 

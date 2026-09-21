@@ -26,8 +26,6 @@ export const CHAR_WRITE_ATTR = '2dd10021-1c37-452d-8979-d1b4a787d0a4';
 export const CHAR_COLOR_TEMP = '2dd11001-1c37-452d-8979-d1b4a787d0a4';
 /** Power, 1 byte: 0 = off, 1 = on. */
 export const CHAR_POWER = '2dd11005-1c37-452d-8979-d1b4a787d0a4';
-/** Motion events. Any non-zero byte in the payload means motion. */
-export const CHAR_MOTION = '2dd11008-1c37-452d-8979-d1b4a787d0a4';
 /**
  * Auto brightness, the lamp's "Auto" button: 1 byte, 0 = off, 1 = on.
  *
@@ -40,8 +38,8 @@ export const CHAR_AUTO_BRIGHTNESS = '2dd11006-1c37-452d-8979-d1b4a787d0a4';
  * Movement mode, the lamp's motion button: 1 byte, 0 = off, 1 = on.
  *
  * With it on the lamp lights when it sees movement and goes out when the room
- * has been still. Separate from {@link CHAR_MOTION}, which only reports what
- * the sensor sees.
+ * has been still. The lamp acts on its sensor internally and reports nothing:
+ * `2dd11008` looks like a motion feed and is a constant. See docs/PROTOCOL.md.
  */
 export const CHAR_MOVEMENT = '2dd11007-1c37-452d-8979-d1b4a787d0a4';
 /** Brightness in lumens, uint16 LE. Used by CD06/CF06. */
@@ -99,7 +97,7 @@ export const MsgType = {
  * to write, which is the body without its type — written bare it is ignored,
  * silently, which is how it came to be believed to work.
  */
-const ATTR_DAYLIGHT = 0x2013;
+export const ATTR_DAYLIGHT = 0x2013;
 
 /**
  * The lamp's preset modes, each activated by writing `01` to its attribute.
@@ -195,13 +193,6 @@ export function decodeYearOfBirth(plaintext: Buffer): YearOfBirth | undefined {
   return { year: plaintext.readUInt16LE(0), status: status ?? 'unknown' };
 }
 
-/** Ask the lamp for one of its coordinates. */
-export function buildCoordinateRead(coordinate: Coordinate): Buffer[] {
-  const body = Buffer.alloc(2);
-  body.writeUInt16LE(COORDINATES[coordinate], 0);
-  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
-}
-
 /** Set one of the lamp's coordinates, in degrees. */
 export function buildCoordinateWrite(coordinate: Coordinate, degrees: number): Buffer[] {
   const value = Buffer.alloc(8);
@@ -209,23 +200,9 @@ export function buildCoordinateWrite(coordinate: Coordinate, degrees: number): B
   return buildAttributeWrite(COORDINATES[coordinate], value);
 }
 
-/** Ask the lamp whether age adjustment is on. */
-export function buildAgeAdjustRead(): Buffer[] {
-  const body = Buffer.alloc(2);
-  body.writeUInt16LE(ATTR_AGE_ADJUST, 0);
-  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
-}
-
 /** Turn age adjustment on or off. */
 export function buildAgeAdjustWrite(on: boolean): Buffer[] {
   return buildAttributeWrite(ATTR_AGE_ADJUST, Buffer.from([on ? 0x01 : 0x00]));
-}
-
-/** Ask the lamp for the sealed year of birth. */
-export function buildYearOfBirthRead(): Buffer[] {
-  const body = Buffer.alloc(2);
-  body.writeUInt16LE(ATTR_YEAR_OF_BIRTH, 0);
-  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
 }
 
 /** Store a sealed year of birth. Pair it with {@link buildYearOfBirthSetAt}. */
@@ -287,22 +264,15 @@ export function buildPresetWrite(preset: Preset, on: boolean): Buffer[] {
   return buildAttributeWrite(PRESETS[preset], Buffer.from([on ? 0x01 : 0x00]));
 }
 
-/** Ask the lamp whether a preset is active. */
-export function buildPresetRead(preset: Preset): Buffer[] {
+/** Ask the lamp for an attribute's value. The answer arrives as `0x91`. */
+export function buildAttributeRead(attribute: number): Buffer[] {
   const body = Buffer.alloc(2);
-  body.writeUInt16LE(PRESETS[preset], 0);
-  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
-}
-
-/** Ask the lamp whether it is tracking daylight. */
-export function buildDaylightRead(): Buffer[] {
-  const body = Buffer.alloc(2);
-  body.writeUInt16LE(ATTR_DAYLIGHT, 0);
+  body.writeUInt16LE(attribute, 0);
   return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
 }
 
 /**
- * Read the answer to {@link buildDaylightRead}.
+ * Read the answer to {@link buildAttributeRead} for a one-byte attribute.
  *
  * The reply carries a status byte the report does not, so the two cannot share
  * a decoder: `attribute(2) || status || length(2) || value`.
