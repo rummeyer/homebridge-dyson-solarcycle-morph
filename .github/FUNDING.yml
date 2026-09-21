@@ -1,0 +1,5 @@
+# Puts the Sponsor button on the repository page. Separate from the "funding"
+# field in package.json, which is what npm and the Homebridge UI read.
+
+github: [rummeyer]
+custom: ["https://paypal.me/rummeyer"]

@@ -63,6 +63,15 @@
     "LICENSE"
   ],
   "homepage": "https://github.com/rummeyer/homebridge-dyson-solarcycle-morph#readme",
-  "funding": "https://github.com/sponsors/rummeyer",
+  "funding": [
+    {
+      "type": "github",
+      "url": "https://github.com/sponsors/rummeyer"
+    },
+    {
+      "type": "paypal",
+      "url": "https://paypal.me/rummeyer"
+    }
+  ],
   "type": "module"
 }
