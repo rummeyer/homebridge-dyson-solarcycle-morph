@@ -46,3 +46,33 @@ jobs:
       # neither needs a lamp or a Bluetooth adapter
       - name: Test
         run: npm test
+
+  # The plugin declares `homebridge: ^1.8.0 || ^2.0.0`, so the older major has
+  # to keep compiling. Its type surface is the part that can break silently —
+  # a characteristic that only exists in 2.x costs nothing here and throws on
+  # a 1.x user's bridge. Node 22 because Homebridge 1.x does not run above 24.
+  homebridge-1:
+    runs-on: ubuntu-latest
+
+    name: Homebridge 1.x types
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The checkout is thrown away after the job, so swapping the dependency
+      # in place is cheaper than a second lockfile that would have to be kept
+      # in step with this one.
+      - name: Swap in Homebridge 1.x
+        run: |
+          npm pkg set devDependencies.homebridge=^1.8.0
+          npm install --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit

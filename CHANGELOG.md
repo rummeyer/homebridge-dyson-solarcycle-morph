@@ -5,6 +5,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-09-21
+
+### Added
+
+- **Homebridge 1.8 and later is supported**, alongside 2.x. Nothing in the
+  plugin ever needed 2.x: it uses Lightbulb, Switch and their characteristics,
+  all of which HAP-NodeJS has carried since long before the 1.8 line, and the
+  whole source typechecks against Homebridge 1.11 without a single change.
+  Requiring 2.0 was simply where development started, and it shut out everyone
+  who has not migrated their bridge yet. A CI job now compiles against 1.x on
+  every push, so the support is checked rather than claimed.
+- The `supports-hap` keyword, which is how the Homebridge UI learns that this
+  plugin publishes its accessories over HomeKit rather than Matter.
+
 ## [1.1.2] — 2026-09-21
 
 ### Changed
