@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-09-21
+
+### Changed
+
+- **The two development probes under `tools/` are no longer published to npm.**
+  They are scripts for poking at a lamp over Bluetooth during development, they
+  are documented nowhere a user would look, and nothing in the plugin calls
+  them. Shipping them only meant that a scan of the installed package found two
+  environment variables being read — `DYSON_PLUGIN_DIR` and `DYSON_PERSIST_DIR`,
+  both of them path overrides for running a probe against a checkout — with no
+  context explaining why. They stay in the repository, where they belong.
+
 ## [1.2.0] — 2026-09-21
 
 ### Added

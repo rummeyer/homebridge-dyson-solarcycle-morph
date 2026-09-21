@@ -1,7 +1,7 @@
 {
   "name": "homebridge-dyson-solarcycle-morph",
   "displayName": "Dyson Solarcycle Morph",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Homebridge plugin for the Bluetooth LE controlled Dyson Solarcycle/Lightcycle Morph desk light",
   "license": "MIT",
   "author": "Oliver Rummeyer",
@@ -56,7 +56,6 @@
   "files": [
     "dist",
     "homebridge-ui",
-    "tools",
     "docs",
     "config.schema.json",
     "README.md",
