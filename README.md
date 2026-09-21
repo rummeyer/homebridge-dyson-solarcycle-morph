@@ -163,6 +163,74 @@ Turning all four switches off leaves the lamp on its own: there is then nothing
 for the second accessory to hold, so it is not created, and an existing one is
 removed.
 
+### The config block
+
+The settings page writes this for you. It is worth knowing the shape anyway, for
+editing `config.json` by hand and for reading what the UI produced:
+
+```json
+{
+  "platform": "DysonSolarcycleMorph",
+  "name": "Dyson Solarcycle Morph",
+  "lights": [
+    {
+      "name": "Desk",
+      "mac": "F0:B1:A7:75:B1:D1",
+      "serial": "E5T-EU-NFA1279A",
+      "latitude": 48.6719,
+      "longitude": 9.2807,
+      "yearOfBirth": 1974,
+      "ageAdjust": true,
+      "daylightSwitch": true,
+      "autoBrightnessSwitch": true,
+      "movementSwitch": true,
+      "presetSwitches": true
+    }
+  ],
+  "dysonAccount": { "email": "you@example.com", "country": "DE" },
+  "adapter": "hci0"
+}
+```
+
+`platform` is how Homebridge finds the plugin, and each light needs a `name`, a
+`mac` and a `serial`. Everything else can be left out; the switches then take
+the defaults below, and the location and year of birth are simply not touched on
+the lamp. The example above shows every key at once, which no real config needs.
+
+| Key | Type | Default | |
+|---|---|---|---|
+| `platform` | string | — | Must be `DysonSolarcycleMorph` |
+| `name` | string | `Dyson Solarcycle Morph` | The log prefix. The settings page insists on it |
+| `lights[].name` | string | — | The name in the Home app |
+| `lights[].mac` | string | — | `AA:BB:CC:DD:EE:FF` |
+| `lights[].serial` | string | — | The accessory's identity; changing it makes a new accessory |
+| `lights[].latitude` | number | unset | Decimal degrees, -90 to 90 |
+| `lights[].longitude` | number | unset | Decimal degrees, -180 to 180 |
+| `lights[].yearOfBirth` | integer | unset | 1900 to this year |
+| `lights[].ageAdjust` | boolean | `true` | Only read when `yearOfBirth` is set |
+| `lights[].daylightSwitch` | boolean | `true` | |
+| `lights[].autoBrightnessSwitch` | boolean | `true` | |
+| `lights[].movementSwitch` | boolean | `true` | |
+| `lights[].presetSwitches` | boolean | `true` | Adds three switches, not one |
+| `dysonAccount.email` | string | unset | Used by the settings page, never by the plugin |
+| `dysonAccount.country` | string | `GB` | Two letters |
+| `dysonAccount.password` | string | unset | Only while authorising; **Forget password** clears it |
+| `adapter` | string | system default | e.g. `hci1` |
+
+**A light with something wrong with it is skipped, and the rest still load** —
+the message names the entry and the key. Two combinations are refused rather
+than half-applied, because half of either would quietly do the wrong thing:
+
+- `latitude` without `longitude`, or the other way round. A lamp told only its
+  latitude would put itself on the Greenwich meridian and track the wrong sunset
+  all year.
+- `ageAdjust` without `yearOfBirth`. There would be nothing to adjust for.
+
+**No key for the lamp appears here.** Pairing puts it in the plugin's storage
+directory instead — see [What is stored, and where](#what-is-stored-and-where).
+A `lights[].ltk` and `lights[].accountId` pair is accepted to override what is
+stored, which exists for migrating an older setup; supply both or neither.
+
 ### Where the lamp is
 
 Daylight tracking follows sunrise and sunset, and the lamp works those out from
@@ -185,6 +253,16 @@ Fill them in and it writes yours whenever the lamp disagrees, and says so:
 ```
 Location of F0:B1:A7:75:B1:D1 set to 48.67190, 9.28070 (was 50.11090, 8.68210)
 ```
+
+**Use my current location** on the settings page fills both fields in for every
+light. It asks your browser first, which only answers on a page served over
+HTTPS — the Homebridge UI is usually plain HTTP, and then the coordinates are
+looked up instead from the address this machine reaches the internet from,
+through [ipwho.is](https://ipwho.is) or [geojs.io](https://geojs.io). That is
+accurate to the nearest town, which is all a sunrise needs, and wrong if the
+connection goes out through a VPN. Nothing is sent to either service: they read
+the public address the request arrives from, which is what every site this
+machine contacts already sees. Check what it filled in before saving.
 
 ### Age adjustment
 
@@ -215,15 +293,6 @@ and only that account can change it.
 Clearing the year altogether is not something the plugin does; the MyDyson app's
 own age-adjustment screen has a remove option for that.
 
-**Use my current location** on the settings page fills both fields in for every
-light. It asks your browser first, which only answers on a page served over
-HTTPS — the Homebridge UI is usually plain HTTP, and then the coordinates are
-looked up instead from the address this machine reaches the internet from,
-through [ipwho.is](https://ipwho.is) or [geojs.io](https://geojs.io). That is
-accurate to the nearest town, which is all a sunrise needs, and wrong if the
-connection goes out through a VPN. Nothing is sent to either service: they read
-the public address the request arrives from, which is what every site this
-machine contacts already sees. Check what it filled in before saving.
 
 ## If something goes wrong
 
