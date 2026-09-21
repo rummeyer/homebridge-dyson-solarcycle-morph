@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] — 2026-09-21
+
+### Changed
+
+- **Reconnect attempts no longer thin out past a minute.** The backoff ran
+  2s, 5s, 15s, 30s, 60s, 2min, 5min, so a lamp that came back during a five
+  minute gap stayed missing from the Home app for the rest of it. The tail is
+  gone: the gap grows to a minute and stays there. The long waits were there to
+  give a lamp with a stuck Bluetooth stack some quiet, but that state only
+  clears by pulling its power — no retry interval fixes it, while the slow
+  notice affects every ordinary drop.
+
 ## [1.1.1] — 2026-09-19
 
 ### Fixed

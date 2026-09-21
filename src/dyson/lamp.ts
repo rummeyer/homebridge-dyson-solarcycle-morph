@@ -65,12 +65,13 @@ const REQUIRED_CHARACTERISTICS = [CHAR_AUTH, CHAR_POWER];
 /**
  * Delays between reconnect attempts; the last value repeats.
  *
- * The long tail is deliberate. The lamp can reach a state where it advertises
- * normally but refuses every connection, and only losing power clears it.
- * Retrying every minute indefinitely will not fix that and gives it no quiet,
- * so attempts thin out instead of hammering.
+ * Attempts thin out rather than hammering, but stop thinning at a minute. The
+ * lamp can reach a state where it advertises normally but refuses every
+ * connection until it loses power, and no retry interval fixes that — but a
+ * longer gap does mean the lamp is back for minutes before the plugin notices,
+ * which is the more common case. A minute is the compromise.
  */
-const RECONNECT_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000, 120_000, 300_000];
+const RECONNECT_BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
 
 /** Consecutive failures after which the log suggests what actually helps. */
 const STUCK_AFTER_ATTEMPTS = 8;
