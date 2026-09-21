@@ -117,6 +117,16 @@ export class MorphAccessory {
     this.lightbulb
       .getCharacteristic(Characteristic.ColorTemperature)
       // HomeKit works in mireds, which run inverse to Kelvin.
+      //
+      // The value has to be brought inside the lamp's range before the range is
+      // narrowed around it. A characteristic being created for the first time
+      // starts at HAP's own default of 140 mireds — colder than this lamp goes —
+      // and narrowing the bounds underneath it makes HAP object to a value it
+      // picked itself. Setting it afterwards is too late; the complaint has
+      // already been made. Only ever seen on a first run, because a restored
+      // accessory brings a value that is already in range, which is why it hid
+      // until the accessory cache was cleared.
+      .updateValue(kelvinToMired(this.lamp.getState().kelvin))
       .setProps({ minValue: kelvinToMired(MAX_KELVIN), maxValue: kelvinToMired(MIN_KELVIN) })
       .onGet(() => this.live(() => kelvinToMired(this.lamp.getState().kelvin)))
       .onSet((value) => this.handleSet('colour temperature', () => this.lamp.setColorTemperature(miredToKelvin(value as number))));
@@ -168,9 +178,9 @@ export class MorphAccessory {
       // and a lookup by type alone would find whichever came first.
       this.daylight =
         accessory.getServiceById(Service.Switch, 'daylight') ??
-        accessory.addService(Service.Switch, `${this.config.name} Daylight`, 'daylight');
+        accessory.addService(Service.Switch, 'Daylight', 'daylight');
       wanted.add('daylight');
-      this.name(this.daylight, 'Daylight');
+      this.name(accessory, this.daylight, 'Daylight');
       this.daylight
         .getCharacteristic(Characteristic.On)
         .onGet(() => this.live(() => this.lamp.getState().daylight))
@@ -183,9 +193,9 @@ export class MorphAccessory {
     if (this.config.autoBrightnessSwitch !== false) {
       this.autoBrightness =
         accessory.getServiceById(Service.Switch, 'auto') ??
-        accessory.addService(Service.Switch, `${this.config.name} Auto Brightness`, 'auto');
+        accessory.addService(Service.Switch, 'Auto Brightness', 'auto');
       wanted.add('auto');
-      this.name(this.autoBrightness, 'Auto Brightness');
+      this.name(accessory, this.autoBrightness, 'Auto Brightness');
       this.autoBrightness
         .getCharacteristic(Characteristic.On)
         .onGet(() => this.live(() => this.lamp.getState().autoBrightness))
@@ -197,9 +207,9 @@ export class MorphAccessory {
       // itself is not possible; see docs/PROTOCOL.md.
       this.movement =
         accessory.getServiceById(Service.Switch, 'movement') ??
-        accessory.addService(Service.Switch, `${this.config.name} Movement`, 'movement');
+        accessory.addService(Service.Switch, 'Movement', 'movement');
       wanted.add('movement');
-      this.name(this.movement, 'Movement');
+      this.name(accessory, this.movement, 'Movement');
       this.movement
         .getCharacteristic(Characteristic.On)
         .onGet(() => this.live(() => this.lamp.getState().movement))
@@ -216,8 +226,8 @@ export class MorphAccessory {
         const label = `${preset[0]!.toUpperCase() + preset.slice(1)} Preset`;
         const service =
           accessory.getServiceById(Service.Switch, preset) ??
-          accessory.addService(Service.Switch, `${this.config.name} ${label}`, preset);
-        this.name(service, label);
+          accessory.addService(Service.Switch, label, preset);
+        this.name(accessory, service, label);
         service
           .getCharacteristic(Characteristic.On)
           .onGet(() => false)
@@ -291,17 +301,58 @@ export class MorphAccessory {
   }
 
   /**
-   * Name a service so the Home app shows it.
+   * Name a service so the Home app shows it, without undoing a rename.
    *
    * `Name` alone is not enough: Home reads `ConfiguredName`, and without it
    * every switch on an accessory shows under the accessory's own name — six
    * controls all called "Desk Light".
+   *
+   * The name is the plain label, "Daylight" rather than "Desk Daylight": these
+   * sit on an accessory that is already named after the lamp, and the Home app
+   * shows them under it, so repeating the lamp's name only made every switch
+   * too long to read in a list.
+   *
+   * `ConfiguredName` is also what the Home app writes when someone renames a
+   * switch, and Homebridge keeps that value in its accessory cache and restores
+   * it on the next start. Writing it unconditionally therefore put the
+   * generated name back every time Homebridge restarted, which is why a rename
+   * never stuck. So it is written only while the switch still carries a name
+   * this plugin generated, and left alone from the moment someone changes it.
    */
-  private name(service: Service, label: string): void {
+  private name(accessory: PlatformAccessory, service: Service, label: string): void {
     const { Characteristic } = this.platform.api.hap;
-    const full = `${this.config.name} ${label}`;
-    service.setCharacteristic(Characteristic.Name, full);
-    service.setCharacteristic(Characteristic.ConfiguredName, full);
+    const generated = (accessory.context.generatedNames ??= {}) as Record<string, string>;
+    const key = service.subtype ?? label;
+
+    // HAP does not count ConfiguredName among a Switch's optional
+    // characteristics, so asking for one the service does not have yet warns
+    // about it. Declaring it first keeps a first run quiet. The guard is not
+    // decoration: declaring is a bare push that HAP also writes to the accessory
+    // cache, so doing it on every restart would grow that file without end.
+    if (!service.testCharacteristic(Characteristic.ConfiguredName)) {
+      service.addOptionalCharacteristic(Characteristic.ConfiguredName);
+    }
+    const current = service.getCharacteristic(Characteristic.ConfiguredName).value;
+
+    service.setCharacteristic(Characteristic.Name, label);
+
+    // Every name this plugin has ever generated for this switch. `label` is the
+    // current scheme and the prefixed form is what 1.2.2 and earlier produced —
+    // both have to count as "not renamed", or dropping the prefix would read as
+    // a rename on every accessory upgrading from an older version and freeze
+    // them all on the old names. A recorded name covers a lamp since renamed in
+    // the config, whose switches carry neither form.
+    const ours = new Set([label, `${this.config.name} ${label}`, generated[key]]);
+
+    if (!current || ours.has(current as string)) {
+      service.setCharacteristic(Characteristic.ConfiguredName, label);
+      generated[key] = label;
+      return;
+    }
+
+    // Keep the record in step, so a switch renamed by hand is not later mistaken
+    // for one still carrying a name this plugin gave it.
+    delete generated[key];
   }
 
   private live<T>(read: () => T): T {

@@ -80,6 +80,14 @@ export class MorphPlatform implements DynamicPlatformPlugin {
       const lamp = new MorphAccessory(this, { light: lightAccessory, switches: switchAccessory }, resolved);
       this.lamps.push(lamp);
 
+      // Setting the accessories up writes to their context — which names the
+      // switches carry the ones this plugin generated, so a rename in the Home
+      // app can be told apart from one it put there itself. That only survives
+      // a restart if Homebridge is asked to save it.
+      this.api.updatePlatformAccessories(
+        switchAccessory ? [lightAccessory, switchAccessory] : [lightAccessory],
+      );
+
       void lamp.start();
     }
 

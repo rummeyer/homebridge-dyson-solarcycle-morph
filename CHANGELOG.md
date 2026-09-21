@@ -5,6 +5,43 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-09-21
+
+### Changed
+
+- **The switches are named for what they do, without the lamp's name in front.**
+  "Daylight" and "Auto Brightness" rather than "Desk Daylight" and "Desk Auto
+  Brightness". They sit on an accessory already named after the lamp and the
+  Home app shows them underneath it, so the prefix only repeated what was on
+  the row above and pushed the part that distinguishes them out of view. A
+  switch still carrying its old name is moved to the new one on the next start;
+  a switch renamed by hand keeps the name it was given.
+
+### Fixed
+
+- **A first run no longer complains about the colour temperature.** Homebridge
+  logged `supplied illegal value: number 140 exceeded minimum of 154` with a
+  stack trace behind it. A colour temperature characteristic starts life at
+  HAP's own default of 140 mireds, which is colder than this lamp goes, so
+  narrowing the range around it left HAP objecting to a value it had picked
+  itself. It is now given a value the lamp supports before the range is
+  narrowed. Nothing was broken by it — HAP clamped the value — but it only ever
+  appeared on a brand new install, because an accessory restored from the cache
+  brings a value that is already in range.
+
+- **A first run no longer warns once per switch about `ConfiguredName`.** HAP
+  does not list it among the optional characteristics of a switch, so the plugin
+  now says it is using it before it does. Same story: visible only when the
+  switches are created rather than restored.
+
+- **Renaming a switch in the Home app sticks.** The six switches are named when
+  the plugin starts, and that name was written every single time — including
+  over a name someone had given a switch themselves, which Homebridge had
+  faithfully saved and restored. So a rename lasted until the next restart of
+  the bridge and then quietly went back. The generated name is now written only
+  while a switch still carries one, and a switch renamed in the Home app keeps
+  its name from then on.
+
 ## [1.2.2] — 2026-09-21
 
 ### Fixed

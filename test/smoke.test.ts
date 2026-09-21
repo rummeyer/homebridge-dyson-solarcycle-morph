@@ -19,7 +19,11 @@ class FakeCharacteristic {
   handlers: Record<string, unknown> = {};
   props: Record<string, unknown> = {};
   name: string;
+  // Real characteristics hold their value, and Homebridge saves it to its
+  // accessory cache and restores it on the next start. Names depend on that.
+  value: unknown;
   constructor(name: string) { this.name = name; }
+  updateValue(value: unknown) { this.value = value; return this; }
   onGet(fn: unknown) { this.handlers.get = fn; return this; }
   onSet(fn: unknown) { this.handlers.set = fn; return this; }
   setProps(p: Record<string, unknown>) { Object.assign(this.props, p); return this; }
@@ -43,8 +47,12 @@ class FakeService {
   }
   linked: FakeService[] = [];
   addLinkedService(service: FakeService) { this.linked.push(service); return this; }
-  setCharacteristic(name: string, _value: unknown) { this.getCharacteristic(name); return this; }
-  updateCharacteristic(name: string, _value: unknown) { this.getCharacteristic(name); return this; }
+  // HAP keeps these two lists apart, and saves both to the accessory cache.
+  optionalCharacteristics: string[] = [];
+  testCharacteristic(name: string) { return this.characteristics.has(name); }
+  addOptionalCharacteristic(name: string) { this.optionalCharacteristics.push(name); }
+  setCharacteristic(name: string, value: unknown) { this.getCharacteristic(name).value = value; return this; }
+  updateCharacteristic(name: string, value: unknown) { this.getCharacteristic(name).value = value; return this; }
 }
 
 class FakeAccessory {
@@ -446,6 +454,116 @@ test('a serial is matched case-insensitively against the store', async () => {
   await settle();
 
   assert.ok(find(registered, LIGHT_UUID));
+  api.emit('shutdown');
+  await settle();
+});
+
+test('a switch renamed in the Home app keeps its name across a restart', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+
+  /**
+   * Start the platform the way Homebridge does, handing back whatever it
+   * registered. Accessories passed in arrive through `configureAccessory`
+   * first, which is how a restart looks from a plugin's side: the same objects,
+   * carrying the values and context saved from the run before.
+   */
+  const boot = async (lightConfig: Record<string, unknown>, cached: FakeAccessory[] = []) => {
+    const { api, registered } = fakeApi();
+    const platform = new MorphPlatform(fakeLog, { platform: 'DysonSolarcycleMorph', lights: [lightConfig] }, api);
+    for (const accessory of cached) {
+      platform.configureAccessory(accessory);
+    }
+    api.emit('didFinishLaunching');
+    await settle();
+    const accessories = cached.length > 0 ? cached : (registered.registered.flat() as FakeAccessory[]);
+    api.emit('shutdown');
+    await settle();
+    return accessories;
+  };
+
+  const first = await boot(light);
+  const switches = first.find((a) => a.UUID === SWITCH_UUID);
+  assert.ok(switches, 'the switches accessory is registered');
+
+  const daylight = switches.getServiceById('Switch', 'daylight');
+  assert.ok(daylight, 'the daylight switch is there');
+  assert.equal(
+    daylight.getCharacteristic('ConfiguredName').value,
+    'Daylight',
+    'a new switch is named for what it does, without repeating the lamp name',
+  );
+
+  // What the Home app does when someone renames a switch: it writes
+  // ConfiguredName, and Homebridge saves it with the accessory.
+  daylight.getCharacteristic('ConfiguredName').value = 'Reading Light';
+
+  await boot(light, first);
+  assert.equal(
+    daylight.getCharacteristic('ConfiguredName').value,
+    'Reading Light',
+    'the rename survives a restart rather than being overwritten with the generated name',
+  );
+
+  // Renaming the lamp in the config leaves the switch names alone now that they
+  // no longer carry it, and must still not disturb a rename.
+  const movement = switches.getServiceById('Switch', 'movement');
+  assert.equal(movement?.getCharacteristic('ConfiguredName').value, 'Movement');
+
+  await boot({ ...light, name: 'Office' }, first);
+  assert.equal(movement?.getCharacteristic('ConfiguredName').value, 'Movement');
+
+  // Declaring ConfiguredName is a bare push that HAP saves with the accessory,
+  // so it has to happen once and not once per start — three boots have now
+  // happened, and the cache would grow on every one of them.
+  assert.deepEqual(
+    daylight.optionalCharacteristics,
+    ['ConfiguredName'],
+    'the optional characteristic is declared once, not on every restart',
+  );
+  assert.equal(
+    daylight.getCharacteristic('ConfiguredName').value,
+    'Reading Light',
+    'and the renamed one is still left alone',
+  );
+});
+
+test('switches named by an older version are renamed, unless they were renamed by hand', async () => {
+  const { MorphPlatform } = await load('dist/platform.js');
+
+  // How 1.2.2 and earlier left an accessory: every switch prefixed with the
+  // lamp's name, and no record of which names the plugin generated.
+  const cached = new FakeAccessory('Desk Switches', SWITCH_UUID);
+  for (const [subtype, name] of [
+    ['daylight', 'Desk Daylight'],
+    ['auto', 'Desk Auto Brightness'],
+    ['movement', 'Keep An Eye Out'],
+  ] as const) {
+    cached.addService('Switch', name, subtype).setCharacteristic('ConfiguredName', name);
+  }
+  const cachedLight = new FakeAccessory('Desk', LIGHT_UUID);
+
+  const { api } = fakeApi();
+  const platform = new MorphPlatform(fakeLog, { platform: 'DysonSolarcycleMorph', lights: [light] }, api);
+  platform.configureAccessory(cachedLight);
+  platform.configureAccessory(cached);
+  api.emit('didFinishLaunching');
+  await settle();
+
+  assert.equal(
+    cached.getServiceById('Switch', 'daylight')?.getCharacteristic('ConfiguredName').value,
+    'Daylight',
+    'a switch still carrying the old generated name is moved to the new one',
+  );
+  assert.equal(
+    cached.getServiceById('Switch', 'auto')?.getCharacteristic('ConfiguredName').value,
+    'Auto Brightness',
+  );
+  assert.equal(
+    cached.getServiceById('Switch', 'movement')?.getCharacteristic('ConfiguredName').value,
+    'Keep An Eye Out',
+    'but one renamed before the upgrade is not mistaken for a generated name',
+  );
+
   api.emit('shutdown');
   await settle();
 });
