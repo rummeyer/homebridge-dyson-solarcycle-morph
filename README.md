@@ -151,6 +151,8 @@ Everything except the lights is optional.
 | **Lights → BLE MAC address** | Filled in by the scan |
 | **Lights → Serial number** | Filled in by the scan. Identifies the accessory, so changing it creates a new one |
 | **Lights → Latitude**, **Longitude** | Where the lamp stands, in decimal degrees. Optional; set both or neither |
+| **Lights → Year of birth** | Turns on the lamp's age adjustment. Optional |
+| **Lights → Apply the age adjustment** | The lamp's own switch for it. On by default |
 | **Lights → Expose daylight tracking** | The Daylight switch. On by default |
 | **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
 | **Lights → Expose movement mode** | The Movement switch. On by default |
@@ -183,6 +185,35 @@ Fill them in and it writes yours whenever the lamp disagrees, and says so:
 ```
 Location of F0:B1:A7:75:B1:D1 set to 48.67190, 9.28070 (was 50.11090, 8.68210)
 ```
+
+### Age adjustment
+
+The lamp can trim the brightness of its **Study and Relax modes** to suit the
+eyes of whoever mainly uses it, which it works out from a birth year. In the
+MyDyson app's words: *"Light requirements change as a person ages. You can add a
+birth year for the main intended user, and the brightness of Study mode and
+Relax mode will automatically adjust."*
+
+Two things have to be true for it to do anything, and the plugin handles both:
+the lamp has to hold the year, and its age-adjustment switch has to be on. Set
+**Year of birth** and the plugin writes it and turns the switch on; turn **Apply
+the age adjustment** off to leave the year in place and stop the lamp acting on
+it. Leave the year empty and neither setting is touched.
+
+The lamp stores a year and nothing else — no day, no month — and it is the one
+setting on this lamp kept encrypted, under a key derived from your lamp's own
+long-term key. It also keeps it to the Dyson account that set it, which the app
+explains as *"for privacy reasons, age adjust is only available to this light's
+owner"*. If a different account got there first the plugin says so and changes
+nothing:
+
+```
+The age adjustment on F0:B1:A7:75:B1:D1 was set by a different Dyson account
+and only that account can change it.
+```
+
+Clearing the year altogether is not something the plugin does; the MyDyson app's
+own age-adjustment screen has a remove option for that.
 
 **Use my current location** on the settings page fills both fields in for every
 light. It asks your browser first, which only answers on a page served over

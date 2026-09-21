@@ -4,9 +4,9 @@ import { test } from 'node:test';
 import {
   COORDINATES,
   MsgType,
+  attributeValue,
   buildCoordinateRead,
   buildCoordinateWrite,
-  decodeCoordinateValue,
 } from '../src/dyson/protocol.ts';
 import { validateLightConfig } from '../src/config.ts';
 
@@ -46,10 +46,10 @@ test('a coordinate write fits in one fragment', () => {
 });
 
 test('the lamp’s own bytes decode to where it stands', () => {
-  const latitude = decodeCoordinateValue(reply(COORDINATES.latitude, LAMP_LATITUDE));
-  assert.deepEqual(latitude, { coordinate: 'latitude', degrees: LAMP_DEGREES.latitude });
-  const longitude = decodeCoordinateValue(reply(COORDINATES.longitude, LAMP_LONGITUDE));
-  assert.deepEqual(longitude, { coordinate: 'longitude', degrees: LAMP_DEGREES.longitude });
+  const latitude = attributeValue(reply(COORDINATES.latitude, LAMP_LATITUDE), COORDINATES.latitude);
+  assert.equal(latitude?.readDoubleLE(0), LAMP_DEGREES.latitude);
+  const longitude = attributeValue(reply(COORDINATES.longitude, LAMP_LONGITUDE), COORDINATES.longitude);
+  assert.equal(longitude?.readDoubleLE(0), LAMP_DEGREES.longitude);
 });
 
 test('a typed decimal is the same place as the lamp\u2019s own reading', () => {
@@ -69,20 +69,19 @@ test('a coordinate read asks for the right attribute', () => {
 test('southern and western coordinates survive the round trip', () => {
   for (const degrees of [-33.8688, -70.6693, 0, 179.999999]) {
     const value = buildCoordinateWrite('latitude', degrees)[0]!.subarray(6);
-    assert.equal(decodeCoordinateValue(reply(COORDINATES.latitude, value))?.degrees, degrees);
+    const back = attributeValue(reply(COORDINATES.latitude, value), COORDINATES.latitude);
+    assert.equal(back?.readDoubleLE(0), degrees);
   }
 });
 
-test('anything that is not a coordinate reply is left alone', () => {
+test('a reply about another attribute is not mistaken for this one', () => {
   // Daylight mode, which shares the channel and the frame.
-  assert.equal(decodeCoordinateValue(reply(0x2013, Buffer.from([0x01]))), undefined);
-  // The right attribute, the wrong length.
-  assert.equal(decodeCoordinateValue(reply(COORDINATES.latitude, Buffer.alloc(4))), undefined);
-  // A refusal, which carries a status byte of its own.
+  assert.equal(attributeValue(reply(0x2013, Buffer.from([0x01])), COORDINATES.latitude), undefined);
+  // A refusal, which the lamp marks with a status byte of its own.
   const refused = reply(COORDINATES.latitude, LAMP_LATITUDE);
   refused[4] = 0x01;
-  assert.equal(decodeCoordinateValue(refused), undefined);
-  assert.equal(decodeCoordinateValue(Buffer.alloc(0)), undefined);
+  assert.equal(attributeValue(refused, COORDINATES.latitude), undefined);
+  assert.equal(attributeValue(Buffer.alloc(0), COORDINATES.latitude), undefined);
 });
 
 test('half a location is rejected', () => {
@@ -105,5 +104,16 @@ test('coordinates outside the globe are rejected', () => {
   assert.match(
     validateLightConfig({ ...light, latitude: Number.NaN, longitude: 9.2807 }, 0)[0]!,
     /latitude must be a number/,
+  );
+});
+
+test('a coordinate reply is read out of the frame', () => {
+  assert.deepEqual(
+    attributeValue(reply(COORDINATES.latitude, LAMP_LATITUDE), COORDINATES.latitude),
+    LAMP_LATITUDE,
+  );
+  assert.equal(
+    attributeValue(reply(COORDINATES.latitude, LAMP_LATITUDE), COORDINATES.latitude)!.readDoubleLE(0),
+    LAMP_DEGREES.latitude,
   );
 });

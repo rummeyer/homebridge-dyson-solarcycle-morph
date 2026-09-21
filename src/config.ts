@@ -43,7 +43,25 @@ export interface LightConfig {
    */
   latitude?: number;
   longitude?: number;
+  /**
+   * Birth year of the main intended user, for the lamp's age adjustment.
+   *
+   * The lamp trims the brightness of its Study and Relax modes to suit older
+   * eyes. It stores the year only — no day, no month — encrypted, and keeps it
+   * to the Dyson account that set it. Leave this out and the plugin does not go
+   * near the setting.
+   */
+  yearOfBirth?: number;
+  /**
+   * Whether the lamp applies the age adjustment. Only consulted when
+   * {@link yearOfBirth} is set, and on by default when it is: a year with the
+   * adjustment off does nothing at all.
+   */
+  ageAdjust?: boolean;
 }
+
+/** The oldest year the MyDyson app will offer, and so the oldest accepted here. */
+export const EARLIEST_YEAR_OF_BIRTH = 1900;
 
 /**
  * Whether any switch at all is wanted for this lamp.
@@ -121,6 +139,18 @@ export function validateLightConfig(light: Partial<LightConfig>, index: number):
   // than half-applied.
   if ((light.latitude === undefined) !== (light.longitude === undefined)) {
     problems.push(`${where} sets only one of latitude/longitude — supply both, or neither`);
+  }
+  if (light.yearOfBirth !== undefined) {
+    const thisYear = new Date().getFullYear();
+    const year = light.yearOfBirth;
+    if (!Number.isInteger(year) || year < EARLIEST_YEAR_OF_BIRTH || year > thisYear) {
+      problems.push(
+        `${where}.yearOfBirth must be a whole year between ${EARLIEST_YEAR_OF_BIRTH} and ${thisYear} ` +
+          `(got ${JSON.stringify(light.yearOfBirth)})`,
+      );
+    }
+  } else if (light.ageAdjust !== undefined) {
+    problems.push(`${where} sets ageAdjust with no yearOfBirth — there is nothing to adjust for`);
   }
   for (const [field, limit] of [['latitude', 90], ['longitude', 180]] as const) {
     const value = light[field];

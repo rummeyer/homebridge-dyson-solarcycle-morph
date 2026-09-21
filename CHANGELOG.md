@@ -25,6 +25,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is four minutes of sunrise — and wrong behind a VPN, so what it fills in is
   worth a glance before saving.
 
+- **The lamp's age adjustment can be set from here too.** A year of birth per
+  light, and the lamp trims the brightness of its Study and Relax modes to suit
+  it. It needs two things to be true — the lamp holding the year, and its own
+  age-adjustment switch being on — so both are settings here, with the switch on
+  by default. The year is the one thing this lamp keeps encrypted; it stores a
+  year and nothing else, and only the Dyson account that set it can change it,
+  which the plugin reports rather than fighting.
+
+### Fixed
+
+- **A setting the lamp refused is no longer reported as set.** The attribute
+  channel is the one part of this lamp that acknowledges a write, and nothing
+  here was reading the acknowledgement. It turns out the lamp refuses one now
+  and then for no reason that four measured comparisons could isolate, so these
+  writes are now checked and repeated up to three times, and a refusal that
+  survives that is said out loud instead of logged as a success.
+
 ## [1.3.1] — 2026-09-21
 
 ### Changed

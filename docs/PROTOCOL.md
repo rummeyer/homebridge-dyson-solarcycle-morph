@@ -207,7 +207,7 @@ held, which is a better starting point than the shapes alone.
 | `0x201d` | `23 00 78 3c 2a 00 b4 77` | **daylight-saving rules**, 8 bytes |
 | `0x201a` | 64 bytes | **year of birth**, encrypted |
 | `0x2025` | `1768998955` | unix time, written whenever `0x201a` is |
-| `0x201b` | `1` | read by the age-adjustment screen alongside `0x201a` |
+| `0x201b` | `1` | **age adjustment on/off**, one byte |
 | `0x2006` | `300` | |
 | `0x2007` | `30` | |
 | `0x2014` | `424` | |
@@ -266,12 +266,57 @@ days of the week packed together. The `23 00 78 3c 2a 00 b4 77` above is the EU
 rule — last Sunday in March at 02:00, plus 60 minutes, last Sunday in October
 at 03:00.
 
-### Year of birth
+### Age adjustment
 
-The lamp's age adjustment stores a **year only** — the app's screen is a number
-picker labelled `light_configurationYearOfBirth`, with no day or month anywhere
-near it. It lives in `0x201a` as 64 bytes, encrypted, and is the only setting on
-this lamp that is.
+The lamp trims the brightness of two of its modes to suit older eyes. The app
+says what it does, in
+`machine552_configuration_ageAdjust_description`:
+
+> Light requirements change as a person ages. You can add a birth year for the
+> main intended user, and the brightness of Study mode and Relax mode will
+> automatically adjust.
+
+**Two attributes, and the switch is the one that decides.** `0x201b` is the
+toggle at the top of the app's own section: `fd0/q1.java` binds it to
+`age_adjust_toggle` in `layout_age_adjust.xml` and writes it straight to the
+lamp from `onCheckedChanged`, and `he0/u.java`'s `T()` reads it back. A year
+stored with the switch off changes nothing.
+
+`0x201a` holds the year, and it stores a **year only** — the picker is labelled
+`light_configurationYearOfBirth` and runs from 1900 to the current year
+(`mr0/d.java`), with no day or month anywhere near it. It is 64 bytes,
+encrypted, and the only setting on this lamp that is. Clearing it is writing a
+year of zero, which is what the app's own remove dialog does (`bd0/d.java`).
+
+The lamp keeps the setting to the account that wrote it. The app puts it
+plainly:
+
+> For privacy reasons, age adjust is only available to this light's owner.
+
+**Writes to `0x201a` are refused now and then, and nothing explains which.** The
+`0x94` acknowledgement carries status `1`, which `he0/k0.java` treats as a hard
+failure ("Invalid write status"), and the value is not stored. Measured on a
+CF06 on 2026-09-21, three or more trials per arm:
+
+| varied | result |
+| --- | --- |
+| fragments 150 ms apart vs consecutive | no difference |
+| `write-without-response` vs `write-with-response` | 3/3 accepted either way |
+| age-adjustment switch off vs on | 3/3 accepted either way |
+| standalone probe, consecutive fragments | 12/12 accepted |
+
+The lamp advertises `write-without-response` and `notify` on this
+characteristic and nothing else, so the write type is not really a choice. The
+same bytes from the plugin were refused once and accepted once, which is the
+shape this lamp's connects have too: no arrangement is reliable, and the answer
+is repetition. This client writes an attribute up to three times, which the
+acknowledgement makes possible rather than hopeful — without reading it, a
+refused setting is indistinguishable from one that took.
+
+Note also that the reply to `0x90` for this attribute is 64 bytes of value, so
+71 bytes of message: four fragments. It is the only thing on this lamp that has
+to be reassembled on the attribute channel, and reading only the first
+notification sees a message that never completes.
 
 The key is not the one the handshake uses. Both come from the same HKDF-SHA256
 over the LTK, with the same empty salt and the same single expansion block

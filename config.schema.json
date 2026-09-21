@@ -76,6 +76,20 @@
               "placeholder": "9.2807",
               "description": "Decimal degrees. Set both or neither \u2014 a lamp is not told half a location."
             },
+            "yearOfBirth": {
+              "title": "Year of birth",
+              "type": "integer",
+              "minimum": 1900,
+              "placeholder": "1974",
+              "description": "Age adjustment: the lamp trims the brightness of its Study and Relax modes to suit the main user\u2019s eyes. The lamp stores the year only, encrypted, and keeps it to the Dyson account that set it. Leave empty to leave the setting alone."
+            },
+            "ageAdjust": {
+              "title": "Apply the age adjustment",
+              "type": "boolean",
+              "default": true,
+              "condition": { "functionBody": "return model.lights && model.lights[arrayIndices[0]] && model.lights[arrayIndices[0]].yearOfBirth;" },
+              "description": "The lamp\u2019s own switch for it. Turning this off leaves the year in place but stops the lamp acting on it."
+            },
             "daylightSwitch": {
               "title": "Expose daylight tracking",
               "type": "boolean",
@@ -132,6 +146,8 @@
                 "lights[].serial",
                 "lights[].latitude",
                 "lights[].longitude",
+                "lights[].yearOfBirth",
+                "lights[].ageAdjust",
                 "lights[].daylightSwitch",
                 "lights[].autoBrightnessSwitch",
                 "lights[].movementSwitch",

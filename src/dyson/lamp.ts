@@ -14,7 +14,15 @@ import { Variant } from 'dbus-next';
 import { createBluetooth } from 'node-ble';
 import type { Adapter, Device, GattCharacteristic, GattServer } from 'node-ble';
 
-import { buildReauthPayloadA, buildReauthPayloadC, deriveAesKey, parseReauthPayloadB } from './crypto.js';
+import {
+  buildReauthPayloadA,
+  buildReauthPayloadC,
+  deriveAesKey,
+  deriveSensitiveKey,
+  parseReauthPayloadB,
+  sealBlock,
+  unsealBlock,
+} from './crypto.js';
 import { Debouncer } from './debounce.js';
 import { Pacer } from './pace.js';
 import { OperationQueue } from './queue.js';
@@ -30,18 +38,30 @@ import {
   CHAR_POWER,
   CHAR_RSSI,
   CHAR_WRITE_ATTR,
+  attributeValue,
+  buildAgeAdjustRead,
+  buildAgeAdjustWrite,
   buildCoordinateRead,
   buildCoordinateWrite,
   buildDaylightRead,
   buildDaylightWrite,
   buildPresetRead,
   buildPresetWrite,
+  buildYearOfBirthRead,
+  buildYearOfBirthSetAt,
+  buildYearOfBirthWrite,
+  decodeYearOfBirth,
+  encodeYearOfBirth,
+  ATTR_AGE_ADJUST,
+  ATTR_YEAR_OF_BIRTH,
+  ATTR_YEAR_OF_BIRTH_SET_AT,
+  COORDINATES,
   PRESETS,
   decodeAttributeReport,
   decodeAttributeValue,
-  decodeCoordinateValue,
   DysonMessage,
   Coordinate,
+  YearOfBirth,
   MAX_KELVIN,
   MessageAssembler,
   MIN_KELVIN,
@@ -173,6 +193,16 @@ const POLL_INTERVAL_MS = 60_000;
 const ATTRIBUTE_REPLY_MS = 2_000;
 
 /**
+ * Attempts at writing one attribute before giving up on it.
+ *
+ * See {@link DysonMorphLamp.writeAttribute}: this lamp refuses a write now and
+ * then with no cause anyone has managed to isolate, and the acknowledgement is
+ * what makes retrying possible rather than hopeful.
+ */
+const ATTRIBUTE_WRITE_ATTEMPTS = 3;
+const ATTRIBUTE_WRITE_RETRY_MS = 400;
+
+/**
  * Spacing between the two coordinate writes.
  *
  * The MyDyson app waits 300 ms between them (`md0/l.java`) where it spaces most
@@ -232,6 +262,18 @@ export interface LampLocation {
   longitude: number;
 }
 
+/**
+ * The lamp's age adjustment: Study and Relax get dimmer or brighter to suit the
+ * eyes of someone born in a given year.
+ *
+ * Two settings on the lamp, and the switch is the one that decides: a year with
+ * it off changes nothing.
+ */
+export interface LampAgeAdjust {
+  yearOfBirth: number;
+  enabled: boolean;
+}
+
 export interface LampOptions {
   /** BLE MAC, e.g. `AA:BB:CC:DD:EE:FF`. */
   mac: string;
@@ -247,6 +289,11 @@ export interface LampOptions {
    * through the MyDyson app already knows.
    */
   location?: LampLocation;
+  /**
+   * Age adjustment for this lamp. Left alone entirely when absent, since only
+   * the owner of the lamp can set it and it is nobody else's business.
+   */
+  ageAdjust?: LampAgeAdjust;
   log?: Logger;
 }
 
@@ -276,6 +323,9 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly accountId: string;
   private readonly adapterName: string | undefined;
   private readonly location: LampLocation | undefined;
+  private readonly ageAdjust: LampAgeAdjust | undefined;
+  /** Key for the lamp's one encrypted setting; not the handshake's. */
+  private readonly sensitiveKey: Buffer;
   private readonly log: Logger;
 
   private bluetooth?: ReturnType<typeof createBluetooth>;
@@ -287,8 +337,18 @@ export class DysonMorphLamp extends EventEmitter {
 
   private readonly assembler = new MessageAssembler();
   private readonly waiters = new Map<number, (message: DysonMessage) => void>();
-  /** Outstanding coordinate questions, answered on the attribute channel. */
-  private readonly coordinateWaiters = new Map<Coordinate, (degrees: number) => void>();
+  /**
+   * Reassembles the attribute channel.
+   *
+   * Most values here fit in one notification, but the sealed year of birth is
+   * 64 bytes and arrives in four, so the stream has to be put back together
+   * before anything can be read out of it.
+   */
+  private readonly attributeAssembler = new MessageAssembler();
+  /** Outstanding attribute questions, keyed by attribute id. */
+  private readonly attributeWaiters = new Map<number, (value: Buffer | undefined) => void>();
+  /** Outstanding attribute writes, keyed by attribute id. */
+  private readonly ackWaiters = new Map<number, (status: number | undefined) => void>();
 
   /** Serialises all GATT access. */
   private readonly operations = new OperationQueue();
@@ -342,6 +402,8 @@ export class DysonMorphLamp extends EventEmitter {
     this.accountId = options.accountId;
     this.adapterName = options.adapter;
     this.location = options.location;
+    this.ageAdjust = options.ageAdjust;
+    this.sensitiveKey = deriveSensitiveKey(Buffer.from(options.ltk.replace(/[^0-9a-fA-F]/g, ''), 'hex'));
     this.log = options.log ?? noopLog;
   }
 
@@ -492,11 +554,9 @@ export class DysonMorphLamp extends EventEmitter {
     if (write === 'none') {
       return;
     }
-    await this.writes.schedule(`${CHAR_WRITE_ATTR}:preset`, async () => {
-      for (const fragment of buildPresetWrite(write, preset !== 'none')) {
-        await this.write(CHAR_WRITE_ATTR, fragment);
-      }
-    });
+    await this.writes.schedule(`${CHAR_WRITE_ATTR}:preset`, () =>
+      this.writeMessage(CHAR_WRITE_ATTR, buildPresetWrite(write, preset !== 'none')),
+    );
   }
 
   async setDaylight(on: boolean): Promise<void> {
@@ -506,11 +566,9 @@ export class DysonMorphLamp extends EventEmitter {
     }
     this.log.debug(`Daylight mode ${on ? 'on' : 'off'} requested`);
     this.patchState({ daylight: on });
-    await this.writes.schedule(CHAR_WRITE_ATTR, async () => {
-      for (const fragment of buildDaylightWrite(on)) {
-        await this.write(CHAR_WRITE_ATTR, fragment);
-      }
-    });
+    await this.writes.schedule(CHAR_WRITE_ATTR, () =>
+      this.writeMessage(CHAR_WRITE_ATTR, buildDaylightWrite(on)),
+    );
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
@@ -648,6 +706,7 @@ export class DysonMorphLamp extends EventEmitter {
     await this.subscribeToState();
     await this.readDaylight();
     await this.syncLocation();
+    await this.syncAgeAdjust();
     await this.subscribeToSignal();
     this.startPolling();
     const rssi = this.lastRssi;
@@ -792,6 +851,32 @@ export class DysonMorphLamp extends EventEmitter {
     if (uuid !== CHAR_AUTH) {
       await this.pacer.pace();
     }
+    await this.writeValue(uuid, value);
+  }
+
+  /**
+   * Write one logical message, its fragments back to back.
+   *
+   * The pacer exists to keep two commands apart; it has no business between the
+   * pieces of one. It never mattered while every message here fitted in a
+   * single fragment, and the sealed year of birth is the first that does not.
+   * Both the app and this client's own auth channel write fragments
+   * consecutively — the name of the app's constant says which gap it means,
+   * `DELAY_BETWEEN_WRITING_MESSAGES_MILLS`.
+   */
+  private async writeMessage(uuid: string, fragments: Buffer[]): Promise<void> {
+    if (uuid !== CHAR_AUTH) {
+      await this.pacer.pace();
+    }
+    if (uuid === CHAR_WRITE_ATTR) {
+      this.log.debug(`Attribute write ${fragments.map((f) => f.toString('hex')).join(' | ')}`);
+    }
+    for (const fragment of fragments) {
+      await this.writeValue(uuid, fragment);
+    }
+  }
+
+  private async writeValue(uuid: string, value: Buffer): Promise<void> {
     await this.characteristic(uuid).writeValue(value, { type: this.writeTypes[uuid] ?? 'command' });
   }
 
@@ -868,8 +953,8 @@ export class DysonMorphLamp extends EventEmitter {
     }
     try {
       const asks = [buildDaylightRead(), ...Object.keys(PRESETS).map((p) => buildPresetRead(p as Preset))];
-      for (const fragment of asks.flat()) {
-        await this.write(CHAR_WRITE_ATTR, fragment);
+      for (const ask of asks) {
+        await this.writeMessage(CHAR_WRITE_ATTR, ask);
       }
     } catch (error) {
       this.log.debug(`Could not ask for the daylight mode: ${describeError(error)}`);
@@ -913,18 +998,27 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
 
+    let written = false;
     try {
-      await this.enqueue(async () => {
-        for (const fragment of buildCoordinateWrite('latitude', wanted.latitude)) {
-          await this.write(CHAR_WRITE_ATTR, fragment);
-        }
+      written = (await this.enqueue(async () => {
+        const latitude = await this.writeAttribute(
+          COORDINATES.latitude,
+          buildCoordinateWrite('latitude', wanted.latitude),
+          'latitude',
+        );
         await sleep(COORDINATE_WRITE_GAP_MS);
-        for (const fragment of buildCoordinateWrite('longitude', wanted.longitude)) {
-          await this.write(CHAR_WRITE_ATTR, fragment);
-        }
-      });
+        const longitude = await this.writeAttribute(
+          COORDINATES.longitude,
+          buildCoordinateWrite('longitude', wanted.longitude),
+          'longitude',
+        );
+        return latitude && longitude;
+      })) === true;
     } catch (error) {
       this.log.warn(`Could not set the location of ${this.mac}: ${describeError(error)}`);
+      return;
+    }
+    if (!written) {
       return;
     }
 
@@ -936,33 +1030,185 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Ask the lamp for one coordinate.
+   * Put the configured age adjustment in the lamp.
    *
-   * @returns The value in degrees, or `undefined` if the lamp did not answer —
-   * which is not an error worth raising, only a reason to leave the setting be.
+   * Two settings, and the order matters: the year first, then the switch, so
+   * the adjustment is never turned on around a year the lamp does not have yet.
+   *
+   * The year is the one thing this lamp stores encrypted, under a key of its
+   * own derived from the same long-term key. Reading it back gives a status
+   * saying whether it is ours to read at all — the lamp keeps the adjustment to
+   * the account that set it, which the app explains as "for privacy reasons,
+   * age adjust is only available to this light's owner".
    */
-  private async readCoordinate(coordinate: Coordinate): Promise<number | undefined> {
-    const answer = new Promise<number | undefined>((resolve) => {
+  private async syncAgeAdjust(): Promise<void> {
+    const wanted = this.ageAdjust;
+    if (!wanted || !this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+
+    const current = await this.readYearOfBirth();
+    if (current?.status === 'other-account') {
+      this.log.warn(
+        `The age adjustment on ${this.mac} was set by a different Dyson account and only that ` +
+          'account can change it. Remove the lamp from the other account, or clear the setting ' +
+          'in the MyDyson app.',
+      );
+      return;
+    }
+    if (current) {
+      this.log.debug(`Lamp ${this.mac} has year of birth ${current.year || 'unset'} (${current.status})`);
+    }
+
+    if (current && current.year !== wanted.yearOfBirth) {
+      try {
+        const written = await this.enqueue(async () => {
+          const sealed = sealBlock(this.sensitiveKey, encodeYearOfBirth(wanted.yearOfBirth));
+          if (!(await this.writeAttribute(ATTR_YEAR_OF_BIRTH, buildYearOfBirthWrite(sealed), 'year of birth'))) {
+            return false;
+          }
+          // The app stamps the time in the same breath; a lamp left with the
+          // old one would claim this answer is years older than it is.
+          await this.writeAttribute(ATTR_YEAR_OF_BIRTH_SET_AT, buildYearOfBirthSetAt(), 'year of birth timestamp');
+          return true;
+        });
+        if (written) {
+          this.log.info(
+            `Year of birth on ${this.mac} set to ${wanted.yearOfBirth}` +
+              `${current.year ? ` (was ${current.year})` : ''}`,
+          );
+        }
+      } catch (error) {
+        this.log.warn(`Could not set the year of birth on ${this.mac}: ${describeError(error)}`);
+        return;
+      }
+    }
+
+    const flag = await this.readAttribute(ATTR_AGE_ADJUST, buildAgeAdjustRead(), 'age adjustment');
+    const on = flag?.length ? flag[0] !== 0 : undefined;
+    if (on === wanted.enabled) {
+      return;
+    }
+    try {
+      const written = await this.enqueue(() =>
+        this.writeAttribute(ATTR_AGE_ADJUST, buildAgeAdjustWrite(wanted.enabled), 'age adjustment'),
+      );
+      if (written) {
+        this.log.info(`Age adjustment on ${this.mac} turned ${wanted.enabled ? 'on' : 'off'}`);
+      }
+    } catch (error) {
+      this.log.warn(`Could not turn the age adjustment ${wanted.enabled ? 'on' : 'off'}: ${describeError(error)}`);
+    }
+  }
+
+  /** Read and unseal the lamp's year of birth. */
+  private async readYearOfBirth(): Promise<YearOfBirth | undefined> {
+    const sealed = await this.readAttribute(ATTR_YEAR_OF_BIRTH, buildYearOfBirthRead(), 'year of birth');
+    if (!sealed) {
+      return undefined;
+    }
+    const plaintext = unsealBlock(this.sensitiveKey, sealed);
+    if (!plaintext) {
+      // The lamp answered but not in a way this key opens, which means the
+      // stored credentials are not the ones the setting was written under.
+      this.log.debug(`The year of birth on ${this.mac} did not unseal with this lamp's key`);
+      return undefined;
+    }
+    return decodeYearOfBirth(plaintext);
+  }
+
+  /**
+   * Ask the lamp for one attribute and wait for the answer.
+   *
+   * @returns The value, or `undefined` if the lamp refused the question or did
+   * not answer it — neither of which is an error worth raising, only a reason
+   * to leave the setting alone.
+   */
+  private async readAttribute(attribute: number, ask: Buffer[], label: string): Promise<Buffer | undefined> {
+    const answer = new Promise<Buffer | undefined>((resolve) => {
       const timer = setTimeout(() => {
-        this.coordinateWaiters.delete(coordinate);
-        this.log.debug(`No answer from ${this.mac} about its ${coordinate}`);
+        this.attributeWaiters.delete(attribute);
+        this.log.debug(`No answer from ${this.mac} about its ${label}`);
         resolve(undefined);
       }, ATTRIBUTE_REPLY_MS);
-      this.coordinateWaiters.set(coordinate, (degrees) => {
+      this.attributeWaiters.set(attribute, (value) => {
         clearTimeout(timer);
-        this.coordinateWaiters.delete(coordinate);
-        resolve(degrees);
+        this.attributeWaiters.delete(attribute);
+        resolve(value);
       });
     });
 
     try {
-      for (const fragment of buildCoordinateRead(coordinate)) {
-        await this.write(CHAR_WRITE_ATTR, fragment);
-      }
+      await this.writeMessage(CHAR_WRITE_ATTR, ask);
     } catch (error) {
-      this.log.debug(`Could not ask for the ${coordinate}: ${describeError(error)}`);
+      this.log.debug(`Could not ask for the ${label}: ${describeError(error)}`);
     }
     return answer;
+  }
+
+  /**
+   * Write one attribute and wait for the lamp to say whether it took it.
+   *
+   * Retried, because this lamp refuses writes for no reason anyone here has
+   * been able to pin down. Twelve writes of the sealed year of birth from a
+   * standalone probe were all accepted; the same bytes from the plugin were
+   * refused once and accepted once. Pacing, write type and the age-adjustment
+   * switch were each measured across three or more trials per arm and each made
+   * no difference. That is the same shape as this lamp's connects, where four
+   * strategies measured alike and repetition was the answer.
+   *
+   * @returns Whether the lamp acknowledged with a status of zero. A refusal and
+   * a silence are both `false`: either way the setting is not what was asked
+   * for, and saying otherwise is worse than saying nothing.
+   */
+  private async writeAttribute(attribute: number, message: Buffer[], label: string): Promise<boolean> {
+    let last: number | undefined;
+    for (let attempt = 1; attempt <= ATTRIBUTE_WRITE_ATTEMPTS; attempt++) {
+      const acknowledged = new Promise<number | undefined>((resolve) => {
+        const timer = setTimeout(() => {
+          this.ackWaiters.delete(attribute);
+          resolve(undefined);
+        }, ATTRIBUTE_REPLY_MS);
+        this.ackWaiters.set(attribute, (status) => {
+          clearTimeout(timer);
+          this.ackWaiters.delete(attribute);
+          resolve(status);
+        });
+      });
+
+      await this.writeMessage(CHAR_WRITE_ATTR, message);
+      last = await acknowledged;
+      if (last === 0) {
+        if (attempt > 1) {
+          this.log.debug(`${this.mac} took the ${label} on attempt ${attempt}`);
+        }
+        return true;
+      }
+      if (attempt < ATTRIBUTE_WRITE_ATTEMPTS) {
+        this.log.debug(
+          `${this.mac} ${last === undefined ? 'did not answer about' : `refused (status ${last})`} ` +
+            `the ${label}, attempt ${attempt} of ${ATTRIBUTE_WRITE_ATTEMPTS}`,
+        );
+        await sleep(ATTRIBUTE_WRITE_RETRY_MS);
+      }
+    }
+
+    this.log.warn(
+      last === undefined
+        ? `${this.mac} did not acknowledge the ${label} being set, after ${ATTRIBUTE_WRITE_ATTEMPTS} attempts`
+        : `${this.mac} refused the ${label} (status ${last}), after ${ATTRIBUTE_WRITE_ATTEMPTS} attempts`,
+    );
+    return false;
+  }
+
+  /** Ask the lamp for one coordinate, in degrees. */
+  private async readCoordinate(coordinate: Coordinate): Promise<number | undefined> {
+    const value = await this.readAttribute(
+      COORDINATES[coordinate],
+      buildCoordinateRead(coordinate),
+      coordinate,
+    );
+    return value?.length === 8 ? value.readDoubleLE(0) : undefined;
   }
 
   private async refreshState(): Promise<void> {
@@ -1132,20 +1378,42 @@ export class DysonMorphLamp extends EventEmitter {
       // on connecting, and a report whenever it changes.
       [
         CHAR_WRITE_ATTR,
-        (value) => {
+        (fragment) => {
+          const message = this.attributeAssembler.push(fragment);
+          if (!message) {
+            return undefined;
+          }
+          // Put the frame back the shape the decoders read, which for a message
+          // that arrived whole is byte for byte what came in.
+          const value = Buffer.concat([Buffer.from([0x80, message.type]), message.payload]);
           // Anything the lamp says about the mode outranks what we inferred.
           // Logged raw: this channel carries attributes that are not decoded,
           // and a report that arrives but says nothing looks exactly like one
           // that never arrived.
           this.log.debug(`Attribute report ${value.toString('hex')}`);
-          // Coordinates share this channel but are not lamp state — HomeKit has
-          // nothing to show for them — so they go to whoever asked and no
-          // further.
-          const coordinate = decodeCoordinateValue(value);
-          if (coordinate) {
-            this.coordinateWaiters.get(coordinate.coordinate)?.(coordinate.degrees);
-            return undefined;
+
+          // An answer to something we asked goes to whoever asked and no
+          // further: settings are not lamp state, and HomeKit has nothing to
+          // show for a coordinate or a year of birth.
+          if (message.type === MsgType.ATTRIBUTE_VALUE && message.payload.length >= 2) {
+            const attribute = message.payload.readUInt16LE(0);
+            const waiter = this.attributeWaiters.get(attribute);
+            if (waiter) {
+              waiter(attributeValue(value, attribute));
+              return undefined;
+            }
           }
+          // This is the only channel on the lamp that says whether a write
+          // landed, and a setting written into the void looks exactly like one
+          // that took, so the settings wait for it.
+          if (message.type === MsgType.ATTRIBUTE_ACK && message.payload.length >= 3) {
+            const acked = this.ackWaiters.get(message.payload.readUInt16LE(0));
+            if (acked) {
+              acked(message.payload[2]);
+              return undefined;
+            }
+          }
+
           const report = decodeAttributeReport(value) ?? decodeAttributeValue(value);
           if (!report) {
             return undefined;

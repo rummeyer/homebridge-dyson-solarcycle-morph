@@ -11,20 +11,62 @@ import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEq
 /** HKDF `info` string, matching `g20/b.d` in the MyDyson Android app. */
 const HKDF_INFO = Buffer.from('USER_AUTH_AES\x00\x00\x00', 'binary');
 
+/**
+ * HKDF `info` for the lamp's sealed settings, from `q50/a.java`'s static
+ * initialiser.
+ *
+ * The year of birth is the one thing on this lamp that is stored encrypted, and
+ * it is deliberately not readable with the key the handshake uses: same LTK,
+ * same derivation, different `info`.
+ */
+const HKDF_INFO_SENSITIVE = Buffer.from('SENSITIVE_STATE\x00', 'binary');
+
 /** Every encrypted block in this protocol is exactly one AES block. */
 const BLOCK = 16;
 
 /**
- * Derive the 16-byte AES key from the long-term key.
- *
  * HKDF-SHA256 with an empty salt, truncated to the first expansion block.
+ *
+ * An empty salt and 32 zero bytes are the same thing to HMAC, which pads a
+ * short key with zeros, so this matches `t50/b.java` substituting the latter.
  */
-export function deriveAesKey(ltk: Buffer): Buffer {
+function hkdf(ltk: Buffer, info: Buffer): Buffer {
   const prk = createHmac('sha256', Buffer.alloc(0)).update(ltk).digest();
   const block1 = createHmac('sha256', prk)
-    .update(Buffer.concat([HKDF_INFO, Buffer.from([0x01])]))
+    .update(Buffer.concat([info, Buffer.from([0x01])]))
     .digest();
   return block1.subarray(0, BLOCK);
+}
+
+/** Derive the 16-byte AES key the re-authentication handshake uses. */
+export function deriveAesKey(ltk: Buffer): Buffer {
+  return hkdf(ltk, HKDF_INFO);
+}
+
+/** Derive the 16-byte AES key the lamp's sealed settings use. */
+export function deriveSensitiveKey(ltk: Buffer): Buffer {
+  return hkdf(ltk, HKDF_INFO_SENSITIVE);
+}
+
+/**
+ * Undo {@link sealBlock}, checking the MAC before trusting the plaintext.
+ *
+ * @param sealed `IV(16) || ciphertext || HMAC-SHA256(ciphertext)(32)`.
+ * @returns The plaintext, or `undefined` if it is malformed or the MAC does not
+ * match — which for a lamp's setting means the key is wrong, not that an
+ * attacker is about, and is worth handling rather than throwing over.
+ */
+export function unsealBlock(key: Buffer, sealed: Buffer): Buffer | undefined {
+  const ciphertextLength = sealed.length - BLOCK - 32;
+  if (ciphertextLength <= 0 || ciphertextLength % BLOCK !== 0) {
+    return undefined;
+  }
+  const ciphertext = sealed.subarray(BLOCK, BLOCK + ciphertextLength);
+  const mac = createHmac('sha256', key).update(ciphertext).digest();
+  if (!timingSafeEqual(mac, sealed.subarray(BLOCK + ciphertextLength))) {
+    return undefined;
+  }
+  return openBlock(key, sealed.subarray(0, BLOCK), ciphertext);
 }
 
 /**

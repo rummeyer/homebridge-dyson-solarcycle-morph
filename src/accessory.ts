@@ -70,6 +70,13 @@ export class MorphAccessory {
         config.latitude !== undefined && config.longitude !== undefined
           ? { latitude: config.latitude, longitude: config.longitude }
           : undefined,
+      // The switch only means anything next to a year, so the pair travels
+      // together and defaults to on: setting a year and leaving the adjustment
+      // off would be asking for nothing to happen.
+      ageAdjust:
+        config.yearOfBirth === undefined
+          ? undefined
+          : { yearOfBirth: config.yearOfBirth, enabled: config.ageAdjust !== false },
       log: platform.log,
     });
 

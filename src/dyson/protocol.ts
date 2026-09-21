@@ -139,6 +139,62 @@ export const COORDINATES = {
 
 export type Coordinate = keyof typeof COORDINATES;
 
+/**
+ * Age adjustment: the lamp trims Study and Relax brightness for the eyes of
+ * someone born in a given year.
+ *
+ * Two attributes, and both matter. `0x201b` is the switch the app's own screen
+ * puts at the top of the section (`fd0/q1.java` writes it from the toggle's
+ * `onCheckedChanged`); `0x201a` holds the year, sealed. A year with the switch
+ * off changes nothing.
+ *
+ * The app's description: "Light requirements change as a person ages. You can
+ * add a birth year for the main intended user, and the brightness of Study mode
+ * and Relax mode will automatically adjust."
+ */
+export const ATTR_AGE_ADJUST = 0x201b;
+export const ATTR_YEAR_OF_BIRTH = 0x201a;
+/**
+ * When the year was last written, unix seconds, uint32 LE.
+ *
+ * The app sets it in the same breath as the year (`he0/u.java`'s `x()`), so
+ * this does too rather than leaving the lamp with a stale one.
+ */
+export const ATTR_YEAR_OF_BIRTH_SET_AT = 0x2025;
+
+/** The sealed year of birth is one AES block of plaintext, so 64 bytes sealed. */
+export const YEAR_OF_BIRTH_SEALED_LENGTH = 64;
+
+/**
+ * The plaintext behind {@link ATTR_YEAR_OF_BIRTH}: the year, then padding.
+ *
+ * Read back, the third byte is a status the app logs by name (`bd0/c.java`):
+ * `0` the year is good, `1` another account set it, `2` no year is set. The
+ * last two come with a year of zero.
+ */
+export interface YearOfBirth {
+  year: number;
+  status: 'set' | 'other-account' | 'not-set' | 'unknown';
+}
+
+/** Build the 16-byte plaintext the lamp expects, per `je0/a.java`. */
+export function encodeYearOfBirth(year: number): Buffer {
+  const plaintext = Buffer.alloc(16);
+  plaintext.writeUInt16LE(year, 0);
+  return plaintext;
+}
+
+/** Read the plaintext recovered from {@link ATTR_YEAR_OF_BIRTH}. */
+export function decodeYearOfBirth(plaintext: Buffer): YearOfBirth | undefined {
+  if (plaintext.length < 3) {
+    return undefined;
+  }
+  const status = (
+    { 0: 'set', 1: 'other-account', 2: 'not-set' } as const
+  )[plaintext[2] as 0 | 1 | 2];
+  return { year: plaintext.readUInt16LE(0), status: status ?? 'unknown' };
+}
+
 /** Ask the lamp for one of its coordinates. */
 export function buildCoordinateRead(coordinate: Coordinate): Buffer[] {
   const body = Buffer.alloc(2);
@@ -153,31 +209,60 @@ export function buildCoordinateWrite(coordinate: Coordinate, degrees: number): B
   return buildAttributeWrite(COORDINATES[coordinate], value);
 }
 
+/** Ask the lamp whether age adjustment is on. */
+export function buildAgeAdjustRead(): Buffer[] {
+  const body = Buffer.alloc(2);
+  body.writeUInt16LE(ATTR_AGE_ADJUST, 0);
+  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
+}
+
+/** Turn age adjustment on or off. */
+export function buildAgeAdjustWrite(on: boolean): Buffer[] {
+  return buildAttributeWrite(ATTR_AGE_ADJUST, Buffer.from([on ? 0x01 : 0x00]));
+}
+
+/** Ask the lamp for the sealed year of birth. */
+export function buildYearOfBirthRead(): Buffer[] {
+  const body = Buffer.alloc(2);
+  body.writeUInt16LE(ATTR_YEAR_OF_BIRTH, 0);
+  return fragmentMessage(MsgType.ATTRIBUTE_GET, body);
+}
+
+/** Store a sealed year of birth. Pair it with {@link buildYearOfBirthSetAt}. */
+export function buildYearOfBirthWrite(sealed: Buffer): Buffer[] {
+  if (sealed.length !== YEAR_OF_BIRTH_SEALED_LENGTH) {
+    throw new Error(`sealed year of birth must be ${YEAR_OF_BIRTH_SEALED_LENGTH} bytes, got ${sealed.length}`);
+  }
+  return buildAttributeWrite(ATTR_YEAR_OF_BIRTH, sealed);
+}
+
+/** Record when the year of birth was set, as the app does alongside it. */
+export function buildYearOfBirthSetAt(when: Date = new Date()): Buffer[] {
+  const value = Buffer.alloc(4);
+  value.writeUInt32LE(Math.floor(when.getTime() / 1000), 0);
+  return buildAttributeWrite(ATTR_YEAR_OF_BIRTH_SET_AT, value);
+}
+
 /**
- * Read the answer to {@link buildCoordinateRead}.
+ * Pull a value of any length out of a reply to `0x90`.
  *
- * Same frame as {@link decodeAttributeValue} — `attribute(2) || status ||
- * length(2) || value` — but the value is eight bytes rather than one, so the
- * two cannot share a decoder.
+ * {@link decodeAttributeValue} answers what a one-byte flag means;
+ * this hands back the bytes, for the attributes whose meaning is not a switch.
+ * The frame is `attribute(2) || status || length(2) || value`.
  */
-export function decodeCoordinateValue(
-  buffer: Buffer,
-): { coordinate: Coordinate; degrees: number } | undefined {
-  // header, type, attribute (2), status, length (2), value (8)
-  if (buffer.length < 15) {
+export function attributeValue(buffer: Buffer, attribute: number): Buffer | undefined {
+  if (buffer.length < 7) {
     return undefined;
   }
   if ((buffer[0]! & 0x80) === 0 || buffer[1] !== MsgType.ATTRIBUTE_VALUE) {
     return undefined;
   }
-  if (buffer[4] !== 0x00 || buffer.readUInt16LE(5) !== 8) {
+  if (buffer[4] !== 0x00 || buffer.readUInt16LE(2) !== attribute) {
     return undefined;
   }
-  const attribute = buffer.readUInt16LE(2);
-  const coordinate = (Object.keys(COORDINATES) as Coordinate[]).find(
-    (name) => COORDINATES[name] === attribute,
-  );
-  return coordinate ? { coordinate, degrees: buffer.readDoubleLE(7) } : undefined;
+  const length = buffer.readUInt16LE(5);
+  const value = buffer.subarray(7, 7 + length);
+  return value.length === length ? value : undefined;
 }
 
 /**
@@ -277,8 +362,15 @@ export const MIN_LUMENS = 100;
 export const MAX_LUMENS = 1000;
 
 /**
- * The MyDyson app assumes a 20-byte ATT payload and never renegotiates, so we
- * do the same rather than trusting the actual MTU.
+ * Bytes per fragment.
+ *
+ * The conservative ATT payload, and deliberately not the negotiated MTU. The
+ * app does ask for 251 (`ble/a.java`) and keeps a per-machine fragment capacity
+ * for when it gets it, but 20 needs no negotiation and is what every message
+ * here has always been written at. Measured on a CF06: the 64-byte year of
+ * birth, four fragments at this size, was accepted twelve times out of twelve —
+ * while BlueZ refuses to send it whole at the MTU it settles on, with "Failed
+ * to initiate write". Fragmenting is the path that works.
  */
 const FRAGMENT_CAPACITY = 20;
 
