@@ -283,29 +283,31 @@ calls them "when your day starts and ends", and the lamp falls back to its
 baseline once the day is over, natural or custom. Probed on 2026-09-22 by
 writing 490 and reading it back: taken immediately, then restored to 480.
 
-### The location cannot be written by anything but the app
+### The location is refused until the app has set one up
 
-**Measured 2026-09-22.** `0x2003` and `0x2004` are acknowledged with status `00`
-and not stored — not after the write, not for the rest of the session, not once
-in roughly fifteen attempts across a day. Reading them back immediately after
-the write returns the factory value every time. Minutes later the MyDyson app
-set the same coordinates and they stuck, and daylight tracking began working at
-once.
+**Measured 2026-09-22.** On a lamp that had never been through the MyDyson app's
+location set-up, `0x2003` and `0x2004` are acknowledged with status `00` and not
+stored — not after the write, not for the rest of the session, not once in
+roughly fifteen attempts across a day. Reading them back immediately after the
+write returns the factory value every time.
 
-`0x2005` behaves the same way but not always: a write of 2 over 1 was taken at
-11:47 while the lamp still held the factory location, and five consecutive
-writes of 2 over 3 were refused at 13:49 after the app had completed the
-location set-up. Writing against a read rather than against the reply does not
-help; that was tried.
+**Once the app has set a location, the lock lifts and stays lifted.** Minutes
+after the app wrote its GPS fix, this plugin overwrote it with the configured
+coordinates, read them back, and the write verified. Same lamp, same session
+shape, same bytes as all the refused attempts.
 
-This is the opposite of everything else on this lamp, where the answer to a
-refusal is repetition. It is also not the framing: `0x2023` takes a write over
-the same path in the same session, and the app's frame is
-`attribute(2) || length(2) || value` (`jr/c.java` case 10), byte for byte what
-`buildAttributeWrite` produces. **What the app does differently is unknown.**
-The one step in its connect routine that this plugin does not perform is the
-beacon-UUID write that opens the chain (`nd0/e.java`, a `primary`/`alternative`
-pair from `c50/a.java`), which is the obvious place to look next.
+So this is a set-up gate rather than a protocol difference, which is consistent
+with everything else that was ruled out: the frame is identical (`jr/c.java`
+case 10 versus `buildAttributeWrite`), the channel works — `0x2023` took a write
+in the same session, while the coordinates were still being refused — and
+retrying does not help, five consecutive attempts being refused as uniformly as
+one.
+
+`0x2005` behaved the same way and recovered at the same moment: a write of 2
+over 1 was taken at 11:47, five writes of 2 over 3 were refused at 13:49, and
+after the app's set-up it simply read 2 again with nothing needing to be
+written. The lamp's daylight hours moved from 08:09-20:22 to 07:04-19:30 in the
+same breath, matching the app's own display to within six minutes.
 
 **A refused daylight mode is invisible from the protocol.** `0x2013` accepts the
 write, acknowledges it, and the lamp never reports the mode back off — it simply

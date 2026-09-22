@@ -248,22 +248,18 @@ lamp was set up on, and never asks again — so a lamp added through the app
 already knows, and one that has moved house still believes it is at the old
 address.
 
-> **Not every lamp accepts them.** One CF06 measured on 2026-09-22 acknowledged
-> both coordinates and stored neither — roughly fifteen attempts across a day,
-> every one reported as successful by the lamp itself, and the factory location
-> still in place afterwards. The same lamp took them from the MyDyson app
-> minutes later. Nobody has yet worked out what the app does differently. The
-> plugin now reads the values back after writing and says plainly in the log
-> when they did not stick:
+> **A lamp that has never been set up in the MyDyson app will not accept a
+> location from anything else.** It answers the write with a success status and
+> keeps the factory coordinates — measured on a CF06 on 2026-09-22, roughly
+> fifteen writes across a day, every one acknowledged and none of them stored.
+> Daylight tracking cannot run in that state, and the lamp says so only through
+> a small LED at its daylight button.
 >
-> ```
-> F0:B1:A7:75:B1:D1 would not take the latitude: it acknowledges the write and
-> keeps its own value. Set it in the MyDyson app instead — see the README.
-> ```
->
-> If you see that, set the location once in the MyDyson app. It sticks, and
-> daylight tracking works from then on — including through the plugin, which
-> needs the lamp to *have* a location but not to have been the one to give it.
+> **Set the location once in the app and that lifts for good.** The same lamp
+> accepted the next write from this plugin minutes later, and has ever since.
+> So the fields below work on a lamp that has been through the app's set-up,
+> which is every lamp that was added the ordinary way; if yours refuses, the log
+> says so in as many words and one pass through the app is the whole fix.
 
 The two fields exist to set the coordinates without the app, and to correct them
 afterwards. Leave them empty and the plugin does not touch what the lamp holds —

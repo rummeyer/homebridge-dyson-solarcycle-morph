@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Says what actually lifts the location refusal, which 1.4.3 got half right.**
+  It reported that some lamps will not accept a location and left it there. The
+  missing half is the part that helps: a lamp refuses only until it has been
+  through the location set-up in the MyDyson app, and one pass through that
+  lifts it for good. The same lamp that had refused fifteen writes in a morning
+  took one from this plugin minutes after the app had set it up, and has
+  accepted them since. So the `latitude` and `longitude` fields work on any lamp
+  that was added the ordinary way, and a lamp that refuses names the fix in the
+  log rather than sounding like a dead end. Documentation and one log message;
+  no behaviour change.
+
 ## [1.4.3] — 2026-09-22
 
 ### Fixed

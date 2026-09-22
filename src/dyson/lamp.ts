@@ -1080,12 +1080,13 @@ export class DysonMorphLamp extends EventEmitter {
    * controls, and rewriting them every connection would be churn on a channel
    * shared with the mode switches.
    *
-   * **Some lamps will not take them at all.** Measured on a CF06 on 2026-09-22:
-   * both coordinates acknowledged with status `00`, neither stored, not even
-   * for the rest of the session, across roughly fifteen attempts in a day. The
-   * same lamp took the coordinates from the MyDyson app minutes later. Until
-   * somebody works out what the app does differently, the write is attempted,
-   * checked, and reported honestly when it fails — see {@link writeAndVerify}.
+   * **A lamp that has never been set up in the MyDyson app refuses these**,
+   * acknowledging the write with a success status and keeping the factory
+   * coordinates — measured on a CF06 on 2026-09-22, roughly fifteen attempts
+   * across a day, none of them stored. One pass through the app's set-up lifts
+   * it for good: the same lamp took this plugin's write minutes later. So the
+   * write is attempted, read back, and a refusal is reported as one rather than
+   * guessed at — see {@link writeAndVerify}.
    */
   private async syncLocation(): Promise<void> {
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -1426,10 +1427,11 @@ export class DysonMorphLamp extends EventEmitter {
    *
    * The acknowledgement is not proof for the settings behind daylight tracking.
    * `0x2003`, `0x2004` and `0x2005` are all answered with status `00` and then,
-   * on some lamps, simply not stored — measured on a CF06 on 2026-09-22 by
-   * reading them back in the same session, immediately after the write. A
-   * plugin that believed the reply reported success for months while the lamp
-   * sat on the factory location.
+   * on a lamp that has never been through the MyDyson app's location set-up,
+   * simply not stored — measured on a CF06 on 2026-09-22 by reading them back
+   * in the same session, immediately after the write. A plugin that believed
+   * the reply reported success for months while the lamp sat on the factory
+   * location and daylight tracking could not run.
    *
    * Tried once, not repeated. Repetition is the answer to most of this lamp's
    * refusals, but not this one: five attempts in a row were refused just as
@@ -1451,7 +1453,8 @@ export class DysonMorphLamp extends EventEmitter {
     }
     this.log.warn(
       `${this.mac} would not take the ${label}: it acknowledges the write and keeps its own value. ` +
-        'Set it in the MyDyson app instead — see the README.',
+        'Lamps refuse this until they have been through the location set-up in the MyDyson app; ' +
+        'one pass through it lifts that for good. See the README.',
     );
     return false;
   }
