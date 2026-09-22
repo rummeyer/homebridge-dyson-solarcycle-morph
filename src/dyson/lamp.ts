@@ -30,6 +30,7 @@ import type { ModeField } from './pending.js';
 import { OperationQueue } from './queue.js';
 import { planReconciliation } from './reconcile.js';
 import { SettleWindow } from './settle.js';
+import { daylightSavingRules, utcOffset } from './timezone.js';
 import type { Preset } from './protocol.js';
 import {
   CHAR_AUTH,
@@ -51,6 +52,12 @@ import {
   decodeYearOfBirth,
   encodeYearOfBirth,
   ATTR_AGE_ADJUST,
+  ATTR_DST_RULES,
+  ATTR_SUNRISE,
+  ATTR_SUNSET,
+  ATTR_UTC_OFFSET,
+  buildDstRulesWrite,
+  buildUtcOffsetWrite,
   ATTR_DAYLIGHT,
   ATTR_YEAR_OF_BIRTH,
   ATTR_YEAR_OF_BIRTH_SET_AT,
@@ -183,6 +190,7 @@ const SETTLE_MS = 3_000;
  */
 const POWER_ON_SETTLE_MS = 1_500;
 
+
 /** What each mode is called in the log. */
 const MODE_LABELS: Record<ModeField, string> = {
   daylight: 'Daylight mode',
@@ -217,6 +225,9 @@ const ATTRIBUTE_REPLY_MS = 2_000;
  * then with no cause anyone has managed to isolate, and the acknowledgement is
  * what makes retrying possible rather than hopeful.
  */
+/** How long to let a write land before reading it back to check. */
+const ATTRIBUTE_SETTLE_GAP_MS = 300;
+
 const ATTRIBUTE_WRITE_ATTEMPTS = 3;
 const ATTRIBUTE_WRITE_RETRY_MS = 400;
 
@@ -797,6 +808,8 @@ export class DysonMorphLamp extends EventEmitter {
     await this.subscribeToState();
     await this.readDaylight();
     await this.syncLocation();
+    await this.syncClock();
+    await this.reportDaylightHours();
     await this.syncAgeAdjust();
     await this.subscribeToSignal();
     this.startPolling();
@@ -1066,6 +1079,13 @@ export class DysonMorphLamp extends EventEmitter {
    * Read first, write only on a difference: these are settings rather than
    * controls, and rewriting them every connection would be churn on a channel
    * shared with the mode switches.
+   *
+   * **Some lamps will not take them at all.** Measured on a CF06 on 2026-09-22:
+   * both coordinates acknowledged with status `00`, neither stored, not even
+   * for the rest of the session, across roughly fifteen attempts in a day. The
+   * same lamp took the coordinates from the MyDyson app minutes later. Until
+   * somebody works out what the app does differently, the write is attempted,
+   * checked, and reported honestly when it fails — see {@link writeAndVerify}.
    */
   private async syncLocation(): Promise<void> {
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -1092,18 +1112,23 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
 
+    const near = (value: Buffer | undefined, degrees: number): boolean =>
+      value?.length === 8 && Math.abs(value.readDoubleLE(0) - degrees) < COORDINATE_EPSILON;
+
     let written = false;
     try {
       written = (await this.enqueue(async () => {
-        const latitude = await this.writeAttribute(
+        const latitude = await this.writeAndVerify(
           COORDINATES.latitude,
           buildCoordinateWrite('latitude', wanted.latitude),
+          (value) => near(value, wanted.latitude),
           'latitude',
         );
         await sleep(COORDINATE_WRITE_GAP_MS);
-        const longitude = await this.writeAttribute(
+        const longitude = await this.writeAndVerify(
           COORDINATES.longitude,
           buildCoordinateWrite('longitude', wanted.longitude),
+          (value) => near(value, wanted.longitude),
           'longitude',
         );
         return latitude && longitude;
@@ -1121,6 +1146,101 @@ export class DysonMorphLamp extends EventEmitter {
         ? ` (was ${describeLocation(current as LampLocation)})`
         : '';
     this.log.info(`Location of ${this.mac} set to ${describeLocation(wanted)}${was}`);
+
+  }
+
+  /**
+   * Put the host's time zone in the lamp, so it can turn a place into an hour.
+   *
+   * Sunrise needs a position *and* a clock. The MyDyson app writes the offset
+   * and the daylight-saving rules on every connection (`nd0/e.java`), taking
+   * both from the phone; this takes them from the host, which knows them
+   * exactly and knows them without asking the network — worth having, because
+   * these go out while reconnecting.
+   *
+   * Written only when the lamp disagrees, so a lamp that already holds the
+   * right values is never touched and the log stays quiet. Some lamps refuse
+   * the offset outright and say otherwise; see {@link writeAndVerify}.
+   */
+  private async syncClock(): Promise<void> {
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+    const offset = await this.readAttribute(ATTR_UTC_OFFSET, 'UTC offset');
+    const rules = await this.readAttribute(ATTR_DST_RULES, 'daylight-saving rules');
+    this.log.debug(
+      `Clock of ${this.mac}: UTC offset ${describeUtcOffset(offset)}, ` +
+        `daylight-saving rules ${describeDstRules(rules)}`,
+    );
+
+    const wantedOffset = utcOffset();
+    // A float's own rounding, not a tolerance for being wrong: the lamp stores
+    // four bytes and reads back what fits in them.
+    const offsetMatches = (value: Buffer | undefined): boolean =>
+      value?.length === 4 && Math.abs(value.readFloatLE(0) - wantedOffset) < 0.005;
+    if (!offsetMatches(offset)) {
+      const settled = await this.enqueue(() =>
+        this.writeAndVerify(ATTR_UTC_OFFSET, buildUtcOffsetWrite(wantedOffset), offsetMatches, 'UTC offset'),
+      );
+      if (settled === true) {
+        this.log.info(
+          `UTC offset of ${this.mac} set to ${wantedOffset}` +
+            (offset?.length === 4 ? ` (was ${offset.readFloatLE(0)})` : ''),
+        );
+      }
+    }
+
+    const wantedRules = daylightSavingRules();
+    if (!wantedRules) {
+      // A zone whose rules this cannot state; see daylightSavingRules. Leaving
+      // the lamp's own is the honest answer.
+      this.log.debug(`No daylight-saving rules to give ${this.mac} for this time zone`);
+      return;
+    }
+    const rulesMatch = (value: Buffer | undefined): boolean => value?.equals(wantedRules) === true;
+    if (rulesMatch(rules)) {
+      return;
+    }
+    await sleep(COORDINATE_WRITE_GAP_MS);
+    const settled = await this.enqueue(() =>
+      this.writeAndVerify(ATTR_DST_RULES, buildDstRulesWrite(wantedRules), rulesMatch, 'daylight-saving rules'),
+    );
+    if (settled === true) {
+      this.log.info(
+        `Daylight-saving rules of ${this.mac} set to ${describeDstRules(wantedRules)}` +
+          (rules ? ` (was ${rules.toString('hex')})` : ''),
+      );
+    }
+  }
+
+  /**
+   * Say what the lamp makes of its location, for the log.
+   *
+   * These two are the only honest answer to "is daylight tracking actually
+   * running?". The mode attribute is no answer at all — the lamp takes the
+   * write, acknowledges it, never reports it back off, and then does nothing if
+   * it has no location to work from, saying so only through a small LED on its
+   * base. Sunrise and sunset are what it has actually computed.
+   */
+  private async reportDaylightHours(): Promise<void> {
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+    const minutes = (value: Buffer | undefined): number | undefined =>
+      value?.length === 2 ? value.readUInt16LE(0) : undefined;
+    const sunrise = minutes(await this.readAttribute(ATTR_SUNRISE, 'sunrise'));
+    const sunset = minutes(await this.readAttribute(ATTR_SUNSET, 'sunset'));
+    if (sunrise === undefined || sunset === undefined) {
+      return;
+    }
+    if (sunrise === 0 && sunset === 0) {
+      this.log.warn(
+        `${this.mac} has worked out no sunrise or sunset, which means it holds no location. ` +
+          'Daylight tracking cannot run until one is set; see the README.',
+      );
+      return;
+    }
+    this.log.info(`${this.mac} puts today's daylight between ${clock(sunrise)} and ${clock(sunset)}`);
   }
 
   /**
@@ -1299,6 +1419,41 @@ export class DysonMorphLamp extends EventEmitter {
   private async readCoordinate(coordinate: Coordinate): Promise<number | undefined> {
     const value = await this.readAttribute(COORDINATES[coordinate], coordinate);
     return value?.length === 8 ? value.readDoubleLE(0) : undefined;
+  }
+
+  /**
+   * Write an attribute and check the lamp actually took it.
+   *
+   * The acknowledgement is not proof for the settings behind daylight tracking.
+   * `0x2003`, `0x2004` and `0x2005` are all answered with status `00` and then,
+   * on some lamps, simply not stored — measured on a CF06 on 2026-09-22 by
+   * reading them back in the same session, immediately after the write. A
+   * plugin that believed the reply reported success for months while the lamp
+   * sat on the factory location.
+   *
+   * Tried once, not repeated. Repetition is the answer to most of this lamp's
+   * refusals, but not this one: five attempts in a row were refused just as
+   * uniformly as one, and each costs a write and a read on a link that would
+   * rather be left alone.
+   *
+   * @returns whether the lamp ended up holding the wanted value.
+   */
+  private async writeAndVerify(
+    attribute: number,
+    fragments: Buffer[],
+    matches: (value: Buffer | undefined) => boolean,
+    label: string,
+  ): Promise<boolean> {
+    await this.writeAttribute(attribute, fragments, label);
+    await sleep(ATTRIBUTE_SETTLE_GAP_MS);
+    if (matches(await this.readAttribute(attribute, label))) {
+      return true;
+    }
+    this.log.warn(
+      `${this.mac} would not take the ${label}: it acknowledges the write and keeps its own value. ` +
+        'Set it in the MyDyson app instead — see the README.',
+    );
+    return false;
   }
 
   private async refreshState(): Promise<void> {
@@ -1710,6 +1865,39 @@ export function describeState(state: LampState): string {
  * Five decimal places is about a metre, which is as fine as the lamp's own use
  * of it — sunrise and sunset — can possibly care about.
  */
+/** Minutes past midnight as a wall clock, for the log. */
+function clock(minutes: number): string {
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+function describeUtcOffset(value: Buffer | undefined): string {
+  if (value === undefined) {
+    return 'no answer';
+  }
+  // Hours.minutes, so 5.30 is half past five and not 5.5 hours; see
+  // ATTR_UTC_OFFSET. Printed raw, because the point here is what the lamp holds.
+  return value.length === 4 ? `${value.readFloatLE(0)}` : `unreadable (${value.toString('hex')})`;
+}
+
+function describeDstRules(value: Buffer | undefined): string {
+  if (value === undefined) {
+    return 'no answer';
+  }
+  if (value.length !== 8) {
+    return `unreadable (${value.toString('hex')})`;
+  }
+  const [start, startDate, startTime, adjustment, end, endDate, endTime, days] = value as unknown as number[];
+  const nibbles = (byte: number) => [byte >> 4, byte & 0x0f];
+  const [startRule, startMonth] = nibbles(start!);
+  const [endRule, endMonth] = nibbles(end!);
+  const [endDay, startDay] = nibbles(days!);
+  return (
+    `${value.toString('hex')} — start rule ${startRule} month ${startMonth} date ${startDate} ` +
+    `at ${startTime} min, adjustment ${adjustment} min; end rule ${endRule} month ${endMonth} ` +
+    `date ${endDate} at ${endTime} min; days ${startDay}/${endDay}`
+  );
+}
+
 function describeLocation(location: LampLocation): string {
   return `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
 }

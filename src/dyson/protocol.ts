@@ -138,6 +138,55 @@ export const COORDINATES = {
 export type Coordinate = keyof typeof COORDINATES;
 
 /**
+ * The lamp's clock: how far it is from UTC, and when its local time jumps.
+ *
+ * `0x2005` is the offset as a little-endian `float`, and it is written
+ * **hours.minutes rather than decimal hours** (`pd0/d.java`): the app takes
+ * `getRawOffset() + DST_OFFSET` in hours and rebuilds it as the whole part plus
+ * the fraction times 0.6, rounded to two places. So half past five reads `5.30`,
+ * not `5.5`. Germany in summer is `2.0` under either reading, which is why the
+ * encoding went unnoticed until the app was read closely.
+ *
+ * `0x201d` carries the daylight-saving rules in eight bytes (`pd0/a.java`):
+ * start rule and month packed into one byte, start date, start time in minutes,
+ * the adjustment in minutes, then the same three for the end, and finally the
+ * two days of the week packed together. A packed byte is `(rule << 4) | month`
+ * (`bm0/c.java`'s `a()`, which builds it from two hex nibbles and so refuses
+ * anything above 15).
+ *
+ * The app fills both on **every connection** (`nd0/e.java`), 500 ms after the
+ * coordinates: the offset from the phone's own time zone, and the rules from a
+ * Dyson cloud endpoint keyed by the zone's IANA id (`pj0/b.java`).
+ */
+export const ATTR_UTC_OFFSET = 0x2005;
+
+/**
+ * When the lamp's own day starts and ends, in minutes past midnight.
+ *
+ * Read as 480 and 1080 — 08:00 and 18:00 — and written by the app as plain
+ * two-byte counts (`he0/u.java`). The settings screen calls them "when your day
+ * starts and ends" and the lamp falls back to its baseline once the day is
+ * over, natural or custom.
+ */
+/**
+ * The lamp's own sunrise and sunset for today, minutes past local midnight.
+ *
+ * Worked out by the lamp from its coordinates and its UTC offset, and the only
+ * way to see from outside whether it has actually taken a location: the
+ * daylight attribute accepts a write whether or not the lamp can act on it, and
+ * a lamp with no location refuses the mode with nothing but an LED on its base.
+ *
+ * Checked against a NOAA calculation for 48.6719, 9.2807 on two dates and
+ * agreeing to the minute; see docs/PROTOCOL.md.
+ */
+export const ATTR_SUNRISE = 0x2014;
+export const ATTR_SUNSET = 0x2015;
+
+export const ATTR_DAY_START = 0x2023;
+export const ATTR_DAY_END = 0x2024;
+export const ATTR_DST_RULES = 0x201d;
+
+/**
  * Age adjustment: the lamp trims Study and Relax brightness for the eyes of
  * someone born in a given year.
  *
@@ -252,6 +301,23 @@ export function buildAttributeWrite(attribute: number, value: Buffer): Buffer[] 
   header.writeUInt16LE(attribute, 0);
   header.writeUInt16LE(value.length, 2);
   return fragmentMessage(MsgType.ATTRIBUTE_SET, Buffer.concat([header, value]));
+}
+
+/**
+ * Tell the lamp how far it is from UTC.
+ *
+ * A little-endian `float`, and the value is hours.minutes rather than decimal
+ * hours; see {@link ATTR_UTC_OFFSET} and `utcOffset` in `timezone.ts`.
+ */
+export function buildUtcOffsetWrite(offset: number): Buffer[] {
+  const payload = Buffer.alloc(4);
+  payload.writeFloatLE(offset);
+  return buildAttributeWrite(ATTR_UTC_OFFSET, payload);
+}
+
+/** Give the lamp the eight bytes that say when the local clock jumps. */
+export function buildDstRulesWrite(rules: Buffer): Buffer[] {
+  return buildAttributeWrite(ATTR_DST_RULES, rules);
 }
 
 /** Switch daylight tracking on or off. */

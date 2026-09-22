@@ -5,6 +5,53 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A setting the lamp refuses is no longer reported as applied.** The lamp
+  answers every write to its location with a success status and then, on some
+  lamps, keeps its own value — so coordinates put in the configuration could sit
+  there for months doing nothing while the log claimed on every connection that
+  they had been applied. Measured on a CF06: roughly fifteen writes across a
+  day, every one acknowledged, the factory location still in place afterwards,
+  and the same lamp accepting the coordinates from the MyDyson app minutes
+  later. What the app does differently is not yet known.
+
+  Writes to the location and the time zone are now read back and checked, and a
+  refusal is logged as a refusal. If your lamp is one of these, set the location
+  once in the MyDyson app: daylight tracking needs the lamp to *have* a
+  location, not to have been given one by this plugin, and the Daylight switch
+  works normally once it does.
+
+### Added
+
+- **The log says what the lamp makes of its location.** Once a connection is up:
+
+  ```
+  F0:B1:A7:75:B1:D1 puts today's daylight between 07:09 and 19:22
+  ```
+
+  This is the lamp's own sunrise and sunset, and the only honest answer to
+  whether daylight tracking is really running. The Daylight switch is not: the
+  lamp accepts the mode, acknowledges it, never reports it back off, and then
+  does nothing at all if it has no location to work from — saying so only
+  through a small LED on its own base. A lamp in that state now says so in the
+  log instead.
+
+- **The lamp is told what time zone it is in.** Daylight tracking turns a place
+  into an hour, so the lamp needs the time zone as well as the coordinates, and
+  the MyDyson app writes both on every connection. This plugin only ever wrote
+  the coordinates. The offset and the daylight-saving rules now go in beside
+  them, and only when the lamp disagrees, so a lamp already holding the right
+  values is never written to.
+
+  Both come from the time zone of the machine Homebridge runs on — no setting to
+  fill in, and nothing asked over the network, which matters because these are
+  written while reconnecting, exactly when the network may still be down. A time
+  zone whose clock changes on a pattern this cannot state is left alone rather
+  than guessed at.
+
 ## [1.4.2] — 2026-09-22
 
 ### Fixed

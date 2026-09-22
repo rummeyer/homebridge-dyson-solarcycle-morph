@@ -248,6 +248,23 @@ lamp was set up on, and never asks again — so a lamp added through the app
 already knows, and one that has moved house still believes it is at the old
 address.
 
+> **Not every lamp accepts them.** One CF06 measured on 2026-09-22 acknowledged
+> both coordinates and stored neither — roughly fifteen attempts across a day,
+> every one reported as successful by the lamp itself, and the factory location
+> still in place afterwards. The same lamp took them from the MyDyson app
+> minutes later. Nobody has yet worked out what the app does differently. The
+> plugin now reads the values back after writing and says plainly in the log
+> when they did not stick:
+>
+> ```
+> F0:B1:A7:75:B1:D1 would not take the latitude: it acknowledges the write and
+> keeps its own value. Set it in the MyDyson app instead — see the README.
+> ```
+>
+> If you see that, set the location once in the MyDyson app. It sticks, and
+> daylight tracking works from then on — including through the plugin, which
+> needs the lamp to *have* a location but not to have been the one to give it.
+
 The two fields exist to set the coordinates without the app, and to correct them
 afterwards. Leave them empty and the plugin does not touch what the lamp holds —
 it still reads them on connecting and puts them in the debug log, which is the
@@ -272,6 +289,31 @@ accurate to the nearest town, which is all a sunrise needs, and wrong if the
 connection goes out through a VPN. Nothing is sent to either service: they read
 the public address the request arrives from, which is what every site this
 machine contacts already sees. Check what it filled in before saving.
+
+### And what time it is there
+
+Coordinates alone are not enough: the lamp turns them into a sunrise using a
+clock, and it keeps neither reliably. **Take the lamp off the mains and it comes
+back holding Dyson's own coordinates in Wiltshire**, and its offset from UTC has
+been seen an hour out with nobody having written it. A lamp in that state blinks
+a few times when daylight tracking is switched on and then drops out of it —
+from the Home app and from the button on its base alike, because nothing is
+wrong with the command.
+
+So the plugin puts the time zone in beside the coordinates, on every connection,
+and only when the lamp disagrees:
+
+```
+UTC offset of F0:B1:A7:75:B1:D1 set to 2 (was 1)
+```
+
+**There is nothing to configure.** Both the offset and the daylight-saving rules
+come from the time zone of the machine Homebridge runs on, which already knows
+them exactly and knows them without asking the network — worth having, since
+these go in while reconnecting, which after a power cut is the moment the
+network is least likely to be up. A time zone whose clock changes on a pattern
+the lamp has no way of being told is left alone rather than guessed at; the
+common European and British rules are exact.
 
 ### Age adjustment
 

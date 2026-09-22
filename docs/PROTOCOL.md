@@ -210,12 +210,12 @@ held, which is a better starting point than the shapes alone.
 | `0x201b` | `1` | **age adjustment on/off**, one byte |
 | `0x2006` | `300` | |
 | `0x2007` | `30` | |
-| `0x2014` | `424` | |
-| `0x2015` | `1170` | plausibly a lumen bound |
+| `0x2014` | `424` | **sunrise**, minutes past local midnight |
+| `0x2015` | `1170` | **sunset**, minutes past local midnight |
 | `0x2017` | `200` | plausibly a lumen bound |
 | `0x2018` | `3000` | plausibly a colour-temperature bound |
-| `0x2023` | `480` | |
-| `0x2024` | `1080` | |
+| `0x2023` | `480` | **day start**, minutes past midnight — 08:00 |
+| `0x2024` | `1080` | **day end** — 18:00 |
 | `0x201e` | `0` | **STUDY preset** |
 | `0x201f` | `0` | **RELAX preset** |
 | `0x2021` | `0` | **PRECISION preset** |
@@ -257,14 +257,125 @@ longitude, countryCode }` record (`sc0/c.java`). There is no search in the other
 direction — `getFromLocationName` appears nowhere in the APK — so a place name
 is a label on coordinates the app already has, never a way to obtain them.
 
-Two neighbours belong to the same setting. `0x2005` is the UTC offset in hours
-as a little-endian `float` (`pd0/d.java`); `2.0` was read during German summer
-time. `0x201d` carries the daylight-saving rules in eight bytes (`pd0/a.java`):
-start rule and month packed into one byte, start date, start time in minutes,
-the adjustment in minutes, then the same three for the end, and finally the two
-days of the week packed together. The `23 00 78 3c 2a 00 b4 77` above is the EU
-rule — last Sunday in March at 02:00, plus 60 minutes, last Sunday in October
-at 03:00.
+### What the lamp makes of it
+
+`0x2014` and `0x2015` are the lamp's own sunrise and sunset for today, in
+minutes past local midnight, computed from the coordinates and the UTC offset.
+They are the only way to see from outside whether the lamp has actually taken a
+location, which matters because the daylight attribute accepts a write whether
+or not the lamp can act on it.
+
+Checked against a NOAA calculation for 48.6719, 9.2807 on two dates, and they
+agree to the minute:
+
+| date | lamp | calculated | offset then |
+| --- | --- | --- | --- |
+| 2026-09-18 | 424 / 1170 | 423 / 1170 | 2 |
+| 2026-09-22 | 489 / 1222 | 489 / 1222 | 3 |
+
+The second row is an hour later than the real sunrise in Stuttgart that day,
+because the lamp was holding an offset of 3. Whether that shifts what the lamp
+*does* depends on whether its clock is shifted with it, which has not been
+established.
+
+`0x2023` and `0x2024` are the day the user can set by hand — the settings screen
+calls them "when your day starts and ends", and the lamp falls back to its
+baseline once the day is over, natural or custom. Probed on 2026-09-22 by
+writing 490 and reading it back: taken immediately, then restored to 480.
+
+### The location cannot be written by anything but the app
+
+**Measured 2026-09-22.** `0x2003` and `0x2004` are acknowledged with status `00`
+and not stored — not after the write, not for the rest of the session, not once
+in roughly fifteen attempts across a day. Reading them back immediately after
+the write returns the factory value every time. Minutes later the MyDyson app
+set the same coordinates and they stuck, and daylight tracking began working at
+once.
+
+`0x2005` behaves the same way but not always: a write of 2 over 1 was taken at
+11:47 while the lamp still held the factory location, and five consecutive
+writes of 2 over 3 were refused at 13:49 after the app had completed the
+location set-up. Writing against a read rather than against the reply does not
+help; that was tried.
+
+This is the opposite of everything else on this lamp, where the answer to a
+refusal is repetition. It is also not the framing: `0x2023` takes a write over
+the same path in the same session, and the app's frame is
+`attribute(2) || length(2) || value` (`jr/c.java` case 10), byte for byte what
+`buildAttributeWrite` produces. **What the app does differently is unknown.**
+The one step in its connect routine that this plugin does not perform is the
+beacon-UUID write that opens the chain (`nd0/e.java`, a `primary`/`alternative`
+pair from `c50/a.java`), which is the obvious place to look next.
+
+**A refused daylight mode is invisible from the protocol.** `0x2013` accepts the
+write, acknowledges it, and the lamp never reports the mode back off — it simply
+does not act. The lamp says so only through a small LED at the daylight button.
+Colour temperature standing still, and `0x2014`/`0x2015` reading zero or stale,
+are the signals that carry.
+
+Those eight connections in one morning that each read back `51.5864, -2.1028`
+and wrote the configured pair again were not the lamp forgetting overnight, as
+first assumed — the lamp had simply never taken the write. See above.
+
+The lamp on this rig is taken off the mains overnight, and the year of birth
+survives that, so nothing here is a wholesale reset.
+
+### The clock
+
+Two neighbours belong to the same setting. `0x2005` is the UTC offset as a
+little-endian `float` (`pd0/d.java`), and it is written **hours.minutes rather
+than decimal hours**: the app takes `getRawOffset() + DST_OFFSET` in hours and
+rebuilds it as the whole part plus the fraction times `0.6`, rounded to two
+places (`nd0/e.java`), so half past five is `5.30` and not `5.5`. A whole-hour
+zone reads the same either way, which is why this stayed hidden while only
+Germany was ever measured.
+
+`0x201d` carries the daylight-saving rules in eight bytes (`pd0/a.java`): start
+rule and month packed into one byte, start date, start time in minutes, the
+adjustment in minutes, then the same three for the end, and finally the two days
+of the week packed together. A packed byte is `(rule << 4) | month`
+(`bm0/c.java`'s `a()`, built from two hex nibbles, which is why it refuses
+anything above 15). The `23 00 78 3c 2a 00 b4 77` above is the EU rule — rule 2
+in month 3 at 120 minutes, adjustment 60, rule 2 in month 10 at 180 minutes,
+Sunday and Sunday.
+
+**Rule `2` means the last such weekday of the month**, and it is the only rule
+number read back from a lamp. The others are presumably Java's `SimpleTimeZone`
+modes, which is where the whole field set comes from, but nothing here has seen
+one — so `src/dyson/timezone.ts` writes the attribute only for a zone whose
+changes fall on a last weekday and leaves it alone otherwise.
+
+The times are wall clock **immediately before** the change: the European spring
+change is 01:00 UTC, which is 02:00 in the offset still in force, and the autumn
+one is 01:00 UTC at 03:00 in the offset still in force. Reading either in the
+new offset names the hour the clock jumped to and is off by one.
+
+### What the app writes on every connection
+
+`nd0/e.java` is the app's connect routine, and it is where the four settings
+above are put back. In order:
+
+1. latitude `0x2003` (`md0/l.java` → `pd0/b`)
+2. 300 ms later, longitude `0x2004` (`pd0/c`)
+3. 500 ms later, the UTC offset `0x2005`, from the phone's own time zone (`pd0/d`)
+4. the daylight-saving rules `0x201d` (`pd0/a`, written from `lt/g.java` case 13)
+
+The rules come from a Dyson cloud endpoint, a plain GET keyed by the phone's
+IANA zone id (`pj0/b.java`), returning `StartMonth`, `StartRule`, `StartDate`,
+`StartDayOfWeek`, `StartTime`, `Adjustment` and the same four for the end
+(`aj0/b.java`). The endpoint is not needed: the fields are derivable from any
+machine's own time-zone database, and doing so reproduces this lamp's own eight
+bytes exactly.
+
+**This is a connect-time sync, not a settings screen**, and it is the reason a
+lamp opened in the app behaves while the same lamp left alone does not.
+
+**There is no attribute for the current time.** The app's whole table is
+`vc0/a.java` — ids stored as `{low, 0x20}`, little-endian — and holds nothing
+time-related beyond these two and `0x2025`, which `he0/u.java`'s `x()` writes
+only in the same breath as the sealed year of birth, as the timestamp of that
+write. So the lamp keeps its own clock, and what a night without power does to
+it is not yet known.
 
 ### Age adjustment
 
