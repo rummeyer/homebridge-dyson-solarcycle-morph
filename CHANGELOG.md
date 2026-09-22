@@ -5,6 +5,33 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **`dayStart` and `dayEnd` now reach the setting they name.** 1.5.0 wrote them
+  to two attributes that hold 08:00 and 18:00 and look like a day but are not
+  the one daylight tracking works to, so the fields did nothing. They now go to
+  the pair the lamp actually uses — the same one the MyDyson app offers as
+  *Sunrise* and *Sunset* — which was confirmed by watching the lamp rather than
+  by reading it back: setting the end to a time already past dropped it to
+  3000 K at 11% within a second, and restoring the real end brought it back to
+  5801 K at 61%.
+
+  The mapping in 1.5.0 was inferred from a settings label and two plausible
+  values without checking which attributes the app's own screen reads. Anyone
+  who set these fields on 1.5.0 changed two settings whose purpose is still
+  unknown; they read 480 and 1080 from the factory, and this version does not
+  touch them.
+
+- **A write the lamp drops is tried again.** The two day boundaries go out
+  together and one of them can go missing while the other lands, which is this
+  lamp losing a write rather than refusing a setting — so those are attempted up
+  to three times, each checked by reading back. The location is not: there the
+  refusal is a set-up gate, five attempts in a row were refused as uniformly as
+  one, and retrying would only spend writes on a link that would rather be left
+  alone.
+
 ## [1.5.0] — 2026-09-22
 
 ### Added

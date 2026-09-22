@@ -52,8 +52,6 @@ import {
   decodeYearOfBirth,
   encodeYearOfBirth,
   ATTR_AGE_ADJUST,
-  ATTR_DAY_END,
-  ATTR_DAY_START,
   ATTR_DST_RULES,
   ATTR_SUNRISE,
   ATTR_SUNSET,
@@ -222,15 +220,36 @@ const POLL_INTERVAL_MS = 60_000;
 const ATTRIBUTE_REPLY_MS = 2_000;
 
 /**
+ * What to tell a user whose lamp will not take its location.
+ *
+ * The refusal is a set-up gate, not a fault: a lamp that has never been through
+ * the MyDyson app's location set-up rejects these while acknowledging them, and
+ * one pass through the app lifts it for good.
+ */
+const LOCATION_REMEDY =
+  'Lamps refuse this until they have been through the location set-up in the MyDyson app; ' +
+  'one pass through it lifts that for good. See the README.';
+
+/**
+ * Attempts at a write the lamp drops rather than refuses.
+ *
+ * Distinct from the set-up gate above: this lamp loses writes now and then for
+ * no cause anyone has isolated, and one of the two day boundaries went missing
+ * that way while the other landed in the same breath.
+ */
+const FICKLE_WRITE_ATTEMPTS = 3;
+
+/** How long to let a write land before reading it back to check. */
+const ATTRIBUTE_SETTLE_GAP_MS = 300;
+
+/**
  * Attempts at writing one attribute before giving up on it.
  *
  * See {@link DysonMorphLamp.writeAttribute}: this lamp refuses a write now and
  * then with no cause anyone has managed to isolate, and the acknowledgement is
- * what makes retrying possible rather than hopeful.
+ * what makes retrying possible rather than hopeful — where it can be believed,
+ * which is not everywhere; see {@link DysonMorphLamp.writeAndVerify}.
  */
-/** How long to let a write land before reading it back to check. */
-const ATTRIBUTE_SETTLE_GAP_MS = 300;
-
 const ATTRIBUTE_WRITE_ATTEMPTS = 3;
 const ATTRIBUTE_WRITE_RETRY_MS = 400;
 
@@ -1127,17 +1146,14 @@ export class DysonMorphLamp extends EventEmitter {
     if (!wanted) {
       return;
     }
-    const settled =
-      current.latitude !== undefined &&
-      current.longitude !== undefined &&
-      Math.abs(current.latitude - wanted.latitude) < COORDINATE_EPSILON &&
-      Math.abs(current.longitude - wanted.longitude) < COORDINATE_EPSILON;
-    if (settled) {
+    const same = (degrees: number | undefined, wantedDegrees: number): boolean =>
+      degrees !== undefined && Math.abs(degrees - wantedDegrees) < COORDINATE_EPSILON;
+    const near = (value: Buffer | undefined, wantedDegrees: number): boolean =>
+      same(value?.length === 8 ? value.readDoubleLE(0) : undefined, wantedDegrees);
+
+    if (same(current.latitude, wanted.latitude) && same(current.longitude, wanted.longitude)) {
       return;
     }
-
-    const near = (value: Buffer | undefined, degrees: number): boolean =>
-      value?.length === 8 && Math.abs(value.readDoubleLE(0) - degrees) < COORDINATE_EPSILON;
 
     let written = false;
     try {
@@ -1147,6 +1163,7 @@ export class DysonMorphLamp extends EventEmitter {
           buildCoordinateWrite('latitude', wanted.latitude),
           (value) => near(value, wanted.latitude),
           'latitude',
+          { remedy: LOCATION_REMEDY },
         );
         await sleep(COORDINATE_WRITE_GAP_MS);
         const longitude = await this.writeAndVerify(
@@ -1154,6 +1171,7 @@ export class DysonMorphLamp extends EventEmitter {
           buildCoordinateWrite('longitude', wanted.longitude),
           (value) => near(value, wanted.longitude),
           'longitude',
+          { remedy: LOCATION_REMEDY },
         );
         return latitude && longitude;
       })) === true;
@@ -1170,7 +1188,6 @@ export class DysonMorphLamp extends EventEmitter {
         ? ` (was ${describeLocation(current as LampLocation)})`
         : '';
     this.log.info(`Location of ${this.mac} set to ${describeLocation(wanted)}${was}`);
-
   }
 
   /**
@@ -1204,7 +1221,9 @@ export class DysonMorphLamp extends EventEmitter {
       value?.length === 4 && Math.abs(value.readFloatLE(0) - wantedOffset) < 0.005;
     if (!offsetMatches(offset)) {
       const settled = await this.enqueue(() =>
-        this.writeAndVerify(ATTR_UTC_OFFSET, buildUtcOffsetWrite(wantedOffset), offsetMatches, 'UTC offset'),
+        this.writeAndVerify(ATTR_UTC_OFFSET, buildUtcOffsetWrite(wantedOffset), offsetMatches, 'UTC offset', {
+          remedy: LOCATION_REMEDY,
+        }),
       );
       if (settled === true) {
         this.log.info(
@@ -1240,10 +1259,21 @@ export class DysonMorphLamp extends EventEmitter {
   /**
    * Put a day of the user's own choosing in the lamp.
    *
-   * Two plain minute counts, and the lamp takes them readily — unlike its
-   * location, they were accepted on a lamp that was still refusing everything
-   * else. Written only on a difference, so a lamp already set this way is left
-   * alone.
+   * `0x2014` and `0x2015` are the day the lamp actually works to. It fills them
+   * from the real sunrise and sunset at its location, and writing them replaces
+   * that — measured on a CF06 on 2026-09-22 by setting the end to 14:00 at
+   * 14:35, whereupon the lamp dropped to 3000 K at 11%, its after-sunset
+   * baseline, and climbed back to 5801 K at 61% the moment the real end was put
+   * back. That is the one thing today that was confirmed by watching the lamp
+   * behave rather than by reading an attribute.
+   *
+   * Retried, unlike the location: one of the two went missing while the other
+   * landed in the same breath, which is this lamp dropping a write rather than
+   * refusing a setting.
+   *
+   * Written on every connection where the lamp disagrees, which also covers the
+   * open question of whether it recomputes these overnight — if it does, the
+   * next connection puts the chosen day back.
    */
   private async syncDay(): Promise<void> {
     const wanted = this.day;
@@ -1251,8 +1281,8 @@ export class DysonMorphLamp extends EventEmitter {
       return;
     }
     for (const [attribute, minutes, label] of [
-      [ATTR_DAY_START, wanted.start, 'day start'],
-      [ATTR_DAY_END, wanted.end, 'day end'],
+      [ATTR_SUNRISE, wanted.start, 'day start'],
+      [ATTR_SUNSET, wanted.end, 'day end'],
     ] as const) {
       const matches = (value: Buffer | undefined): boolean =>
         value?.length === 2 && value.readUInt16LE(0) === minutes;
@@ -1261,7 +1291,9 @@ export class DysonMorphLamp extends EventEmitter {
         continue;
       }
       const written = await this.enqueue(() =>
-        this.writeAndVerify(attribute, buildDayBoundaryWrite(attribute, minutes), matches, label),
+        this.writeAndVerify(attribute, buildDayBoundaryWrite(attribute, minutes), matches, label, {
+          attempts: FICKLE_WRITE_ATTEMPTS,
+        }),
       );
       if (written === true) {
         const was = current?.length === 2 ? ` (was ${clock(current.readUInt16LE(0))})` : '';
@@ -1277,7 +1309,8 @@ export class DysonMorphLamp extends EventEmitter {
    * running?". The mode attribute is no answer at all — the lamp takes the
    * write, acknowledges it, never reports it back off, and then does nothing if
    * it has no location to work from, saying so only through a small LED on its
-   * base. Sunrise and sunset are what it has actually computed.
+   * base. The day it is working to is what it has actually settled on, whether
+   * that came from the sun or from {@link syncDay}.
    */
   private async reportDaylightHours(): Promise<void> {
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -1489,11 +1522,16 @@ export class DysonMorphLamp extends EventEmitter {
    * the reply reported success for months while the lamp sat on the factory
    * location and daylight tracking could not run.
    *
-   * Tried once, not repeated. Repetition is the answer to most of this lamp's
-   * refusals, but not this one: five attempts in a row were refused just as
-   * uniformly as one, and each costs a write and a read on a link that would
-   * rather be left alone.
+   * Whether to try again depends on which refusal this is, and the two look
+   * alike from here. The lamp drops writes sporadically, and repetition is the
+   * established answer to that; but it also refuses its location outright until
+   * the MyDyson app has set one up, and there five attempts in a row were
+   * refused as uniformly as one, so retrying only spends writes and reads on a
+   * link that would rather be left alone. Callers say which they are facing.
    *
+   * @param attempts how many times to write before giving up. One for a
+   * refusal known to be settled, more where the lamp is merely being fickle.
+   * @param remedy what to tell the user when it will not take, if anything.
    * @returns whether the lamp ended up holding the wanted value.
    */
   private async writeAndVerify(
@@ -1501,16 +1539,22 @@ export class DysonMorphLamp extends EventEmitter {
     fragments: Buffer[],
     matches: (value: Buffer | undefined) => boolean,
     label: string,
+    { attempts = 1, remedy = '' }: { attempts?: number; remedy?: string } = {},
   ): Promise<boolean> {
-    await this.writeAttribute(attribute, fragments, label);
-    await sleep(ATTRIBUTE_SETTLE_GAP_MS);
-    if (matches(await this.readAttribute(attribute, label))) {
-      return true;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      await this.writeAttribute(attribute, fragments, label);
+      await sleep(ATTRIBUTE_SETTLE_GAP_MS);
+      if (matches(await this.readAttribute(attribute, label))) {
+        if (attempt > 1) {
+          this.log.debug(`${this.mac} took the ${label} on attempt ${attempt}`);
+        }
+        return true;
+      }
     }
     this.log.warn(
-      `${this.mac} would not take the ${label}: it acknowledges the write and keeps its own value. ` +
-        'Lamps refuse this until they have been through the location set-up in the MyDyson app; ' +
-        'one pass through it lifts that for good. See the README.',
+      `${this.mac} would not take the ${label}: it acknowledges the write and keeps its own value` +
+        (attempts > 1 ? `, after ${attempts} attempts` : '') +
+        `.${remedy ? ` ${remedy}` : ''}`,
     );
     return false;
   }
@@ -1918,12 +1962,6 @@ export function describeState(state: LampState): string {
   return [state.on ? 'on' : 'off', `${state.brightness}%`, `${state.kelvin}K`, ...modes].join(', ');
 }
 
-/**
- * Render a location for the log.
- *
- * Five decimal places is about a metre, which is as fine as the lamp's own use
- * of it — sunrise and sunset — can possibly care about.
- */
 /** Minutes past midnight as a wall clock, for the log. */
 function clock(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
@@ -1957,6 +1995,12 @@ function describeDstRules(value: Buffer | undefined): string {
   );
 }
 
+/**
+ * Render a location for the log.
+ *
+ * Five decimal places is about a metre, which is as fine as the lamp's own use
+ * of it — the start and end of its day — can possibly care about.
+ */
 function describeLocation(location: LampLocation): string {
   return `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
 }

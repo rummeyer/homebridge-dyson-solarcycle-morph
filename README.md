@@ -296,44 +296,64 @@ Daylight tracking follows the real sunrise and sunset by default. Two optional
 fields replace that with a day you choose:
 
 ```json
-"dayStart": "08:00",
-"dayEnd": "18:00"
+"dayStart": "07:30",
+"dayEnd": "22:00"
 ```
 
 The lamp keeps its warm-to-cool-to-warm shape and fits it between those two
-times instead of the sun's, and returns to its baseline settings once the day is
-over. It is the same setting the MyDyson app offers next to the location.
-Supply both or neither, and the end has to come after the start — the lamp
-stores two plain minute counts and has no way to express a day that runs past
-midnight. Leave them out and it follows the sun.
+times instead of the sun's, and falls back to a softer, warmer baseline once the
+day is over. It is the same pair the MyDyson app offers as *Sunrise* and
+*Sunset*. Supply both or neither, and the end has to come after the start — the
+lamp stores two plain minute counts and has no way to express a day that runs
+past midnight. Leave them out and the sun decides.
 
-These the lamp accepts readily, unlike its location: they were taken on a lamp
-that was refusing everything else at the time.
+The effect is immediate and visible: setting the end to a time already past
+drops the lamp to its baseline within a second, and putting the real one back
+brings it straight up again.
+
+**There is no way back to automatic from here.** Clearing the fields stops the
+plugin correcting the lamp, but whatever day was last written stays in it. The
+lamp may recompute the times from its location on its own — that is untested —
+and the MyDyson app certainly can. Until that is settled, treat setting a day as
+something the app has to undo.
 
 ### And what time it is there
 
-Coordinates alone are not enough: the lamp turns them into a sunrise using a
-clock, and it keeps neither reliably. **Take the lamp off the mains and it comes
-back holding Dyson's own coordinates in Wiltshire**, and its offset from UTC has
-been seen an hour out with nobody having written it. A lamp in that state blinks
-a few times when daylight tracking is switched on and then drops out of it —
-from the Home app and from the button on its base alike, because nothing is
-wrong with the command.
-
-So the plugin puts the time zone in beside the coordinates, on every connection,
-and only when the lamp disagrees:
+Coordinates alone are not enough: turning a place into an hour needs a clock, so
+the lamp holds an offset from UTC and the rules for when the local clock jumps.
+The MyDyson app writes both on every connection, and so does this plugin, only
+when the lamp disagrees:
 
 ```
 UTC offset of F0:B1:A7:75:B1:D1 set to 2 (was 1)
 ```
 
-**There is nothing to configure.** Both the offset and the daylight-saving rules
-come from the time zone of the machine Homebridge runs on, which already knows
-them exactly and knows them without asking the network — worth having, since
-these go in while reconnecting, which after a power cut is the moment the
-network is least likely to be up. A time zone whose clock changes on a pattern
-the lamp has no way of being told is left alone rather than guessed at; the
-common European and British rules are exact.
+**There is nothing to configure.** Both come from the time zone of the machine
+Homebridge runs on, which knows them exactly and knows them without asking the
+network — worth having, since they go in while reconnecting. A time zone whose
+clock changes on a pattern the lamp has no way of being told is left alone
+rather than guessed at; the common European and British rules are exact.
+
+A lamp that will not take the offset says so in the log and keeps its own, the
+same way it does with the location.
+
+### Is it actually tracking?
+
+The Daylight switch does not answer that. The lamp accepts the mode, never
+reports it back off, and then does nothing at all if it has no location to work
+from. What answers it is the day the lamp has worked out, which appears on every
+connection:
+
+```
+F0:B1:A7:75:B1:D1 puts today's daylight between 07:04 and 19:30
+```
+
+A lamp with no location has no day, and says so:
+
+```
+F0:B1:A7:75:B1:D1 has worked out no sunrise or sunset, which means it holds no
+location. Daylight tracking cannot run until one is set
+```
 
 ### Age adjustment
 

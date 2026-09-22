@@ -291,14 +291,6 @@ export class MorphAccessory {
   }
 
   /**
-   * Answer only while the lamp is actually reachable.
-   *
-   * Without this HomeKit keeps showing whatever was last known — a lamp that
-   * has been unreachable for minutes still reads as on at 100%, which is worse
-   * than saying nothing. Throwing a communication failure is how an accessory
-   * reports itself as unavailable, and the Home app shows "No Response".
-   */
-  /**
    * Let a momentary switch spring back.
    *
    * HomeKit has no stateless switch that appears as one, so this is the usual
@@ -375,6 +367,14 @@ export class MorphAccessory {
     delete generated[key];
   }
 
+  /**
+   * Answer only while the lamp is actually reachable.
+   *
+   * Without this HomeKit keeps showing whatever was last known — a lamp that
+   * has been unreachable for minutes still reads as on at 100%, which is worse
+   * than saying nothing. Throwing a communication failure is how an accessory
+   * reports itself as unavailable, and the Home app shows "No Response".
+   */
   private live<T>(read: () => T): T {
     if (!this.lamp.isConnected()) {
       throw new this.platform.api.hap.HapStatusError(

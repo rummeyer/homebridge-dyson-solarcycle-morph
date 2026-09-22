@@ -160,31 +160,26 @@ export type Coordinate = keyof typeof COORDINATES;
  */
 export const ATTR_UTC_OFFSET = 0x2005;
 
+export const ATTR_DST_RULES = 0x201d;
+
 /**
- * When the lamp's own day starts and ends, in minutes past midnight.
+ * The day the lamp works to, in minutes past local midnight.
  *
- * Read as 480 and 1080 — 08:00 and 18:00 — and written by the app as plain
- * two-byte counts (`he0/u.java`). The settings screen calls them "when your day
- * starts and ends" and the lamp falls back to its baseline once the day is
- * over, natural or custom.
- */
-/**
- * The lamp's own sunrise and sunset for today, minutes past local midnight.
+ * The lamp fills these from the real sunrise and sunset at its location, and
+ * writing them replaces that: measured on a CF06 on 2026-09-22 by setting the
+ * end to 14:00 at 14:35, whereupon the lamp fell to 3000 K at 11% — its
+ * after-sunset baseline — and climbed back the moment the real end was
+ * restored. Two-byte counts, read and written by `he0/u.java`, and the app
+ * offers them as "Sunrise" and "Sunset" on the screen carrying its "Custom
+ * daytime" label.
  *
- * Worked out by the lamp from its coordinates and its UTC offset, and the only
- * way to see from outside whether it has actually taken a location: the
- * daylight attribute accepts a write whether or not the lamp can act on it, and
- * a lamp with no location refuses the mode with nothing but an LED on its base.
- *
- * Checked against a NOAA calculation for 48.6719, 9.2807 on two dates and
- * agreeing to the minute; see docs/PROTOCOL.md.
+ * They are also the only way to see from outside whether the lamp has taken a
+ * location at all: a lamp with none has no day, and refuses daylight tracking
+ * with nothing but an LED on its base while still acknowledging the write.
  */
 export const ATTR_SUNRISE = 0x2014;
 export const ATTR_SUNSET = 0x2015;
 
-export const ATTR_DAY_START = 0x2023;
-export const ATTR_DAY_END = 0x2024;
-export const ATTR_DST_RULES = 0x201d;
 
 /**
  * Age adjustment: the lamp trims Study and Relax brightness for the eyes of
@@ -324,7 +319,7 @@ export function buildDstRulesWrite(rules: Buffer): Buffer[] {
  * Tell the lamp when its day starts or ends, in minutes past midnight.
  *
  * Two bytes, little-endian, as the app writes them (`he0/u.java`). The same
- * shape serves {@link ATTR_DAY_START} and {@link ATTR_DAY_END}.
+ * shape serves {@link ATTR_SUNRISE} and {@link ATTR_SUNSET}.
  */
 export function buildDayBoundaryWrite(attribute: number, minutes: number): Buffer[] {
   const payload = Buffer.alloc(2);

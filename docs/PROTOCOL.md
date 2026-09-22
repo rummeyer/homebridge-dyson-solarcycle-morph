@@ -210,16 +210,17 @@ held, which is a better starting point than the shapes alone.
 | `0x201b` | `1` | **age adjustment on/off**, one byte |
 | `0x2006` | `300` | |
 | `0x2007` | `30` | |
-| `0x2014` | `424` | **sunrise**, minutes past local midnight |
-| `0x2015` | `1170` | **sunset**, minutes past local midnight |
+| `0x2014` | `424` | **the day's start**, minutes past local midnight |
+| `0x2015` | `1170` | **the day's end** |
 | `0x2017` | `200` | plausibly a lumen bound |
 | `0x2018` | `3000` | plausibly a colour-temperature bound |
-| `0x2023` | `480` | **day start**, minutes past midnight — 08:00 |
-| `0x2024` | `1080` | **day end** — 18:00 |
+| `0x2023` | `480` | takes a write; purpose unknown. Looks like 08:00 |
+| `0x2024` | `1080` | ditto, 18:00. Not the day daylight tracking works to |
 | `0x201e` | `0` | **STUDY preset** |
 | `0x201f` | `0` | **RELAX preset** |
 | `0x2021` | `0` | **PRECISION preset** |
-| `0x2009` `0x200b` `0x200d` `0x201c` `0x2029` `0x2032` | `0` | flags |
+| `0x2029` | `0` → `1` | 1 once the location has been set up; see below |
+| `0x2009` `0x200b` `0x200d` `0x201c` `0x2032` | `0` | flags |
 | `0x200a` | `1` | flag |
 | `0x2028` `0x2030` `0x2031` | 4 bytes | |
 
@@ -259,14 +260,14 @@ is a label on coordinates the app already has, never a way to obtain them.
 
 ### What the lamp makes of it
 
-`0x2014` and `0x2015` are the lamp's own sunrise and sunset for today, in
-minutes past local midnight, computed from the coordinates and the UTC offset.
-They are the only way to see from outside whether the lamp has actually taken a
-location, which matters because the daylight attribute accepts a write whether
-or not the lamp can act on it.
+`0x2014` and `0x2015` are the day the lamp works to, in minutes past local
+midnight. It fills them from the real sunrise and sunset at its location, and
+they are the only way to see from outside whether it has taken a location at
+all — a lamp with none has no day, and refuses daylight tracking with nothing
+but an LED on its base while still acknowledging the write.
 
 Checked against a NOAA calculation for 48.6719, 9.2807 on two dates, and they
-agree to the minute:
+agree to within a few minutes:
 
 | date | lamp | calculated | offset then |
 | --- | --- | --- | --- |
@@ -274,21 +275,37 @@ agree to the minute:
 | 2026-09-22 | 489 / 1222 | 489 / 1222 | 3 |
 
 The second row is an hour later than the real sunrise in Stuttgart that day,
-because the lamp was holding an offset of 3. Whether that shifts what the lamp
-*does* depends on whether its clock is shifted with it, which has not been
-established.
+because the lamp was holding an offset of 3 at the time. It went back to 424 /
+1170 once the offset was 2 again, so the lamp recomputes these when its clock
+changes.
 
-`0x2023` and `0x2024` are the day the user can set by hand — the settings screen
-calls them "when your day starts and ends", and the lamp falls back to its
-baseline once the day is over, natural or custom. Two-byte minute counts,
-little-endian, written by `he0/u.java`. Probed on 2026-09-22 by writing 490 and
-reading it back: taken immediately, then restored to 480 — and notably taken
-while the same lamp was still refusing its own coordinates, which is what first
-showed the refusal to be particular rather than general.
+**Writing them replaces the sun, and the lamp acts at once.** Measured on
+2026-09-22: with the real day running 424 to 1170, `0x2015` was set to 840
+(14:00) at 14:35, and within a second the lamp dropped from 5804 K at 61% to
+3000 K at 11% — the softer, warmer baseline the app describes for after sunset.
+Restoring 1170 brought it back to 5801 K at 61% unprompted. This is the only
+finding here confirmed by watching the lamp behave rather than by reading an
+attribute back.
 
-The lamp has no way to state a day that runs past midnight, so an end before the
-start is not a night shift but a day of negative length; the plugin refuses it
-in configuration rather than writing it.
+In the same run `0x2014` did not take its write while `0x2015`, written 300 ms
+later, did. One trial, and this lamp drops writes sporadically, so that is read
+as a lost write rather than a read-only attribute — the plugin writes these up
+to three times and checks by reading.
+
+`0x2029` reads 0 on a lamp whose location has never been set up and 1 after the
+app has done it. The app's own screen reads it alongside `0x2014` and `0x2015`
+and nothing else (`cd0/h.java` via `O()`, `c0()`, `X()` in `he0/u.java`), and
+the label on that screen is "Custom daytime", which makes the three look like
+one setting with a switch. **But the lamp held the computed times while this
+read 1**, so whatever it switches is not simply a chosen day versus the real
+one. `he0/u.java`'s `E(boolean)` writes it. Left alone until it is understood.
+
+`0x2023` and `0x2024` hold 480 and 1080 — 08:00 and 18:00 — and take writes:
+probed on 2026-09-22 by writing 490 and reading it back, then restored. That was
+the probe that showed the location refusal to be particular rather than general.
+**They are not the day daylight tracking works to**, which is what they were
+briefly taken for: the app's daylight screen does not read them, and setting
+them changed nothing the lamp did. Purpose unknown.
 
 ### The location is refused until the app has set one up
 
@@ -319,8 +336,8 @@ same breath, matching the app's own display to within six minutes.
 **A refused daylight mode is invisible from the protocol.** `0x2013` accepts the
 write, acknowledges it, and the lamp never reports the mode back off — it simply
 does not act. The lamp says so only through a small LED at the daylight button.
-Colour temperature standing still, and `0x2014`/`0x2015` reading zero or stale,
-are the signals that carry.
+Colour temperature standing still, and `0x2014`/`0x2015` reading zero, are the
+signals that carry.
 
 Those eight connections in one morning that each read back `51.5864, -2.1028`
 and wrote the configured pair again were not the lamp forgetting overnight, as
