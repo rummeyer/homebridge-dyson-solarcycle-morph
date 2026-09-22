@@ -307,15 +307,42 @@ the probe that showed the location refusal to be particular rather than general.
 briefly taken for: the app's daylight screen does not read them, and setting
 them changed nothing the lamp did. Purpose unknown.
 
-### The location is refused until the app has set one up
+### The lamp will not keep a location until it knows the time
 
-**Measured 2026-09-22.** On a lamp that had never been through the MyDyson app's
-location set-up, `0x2003` and `0x2004` are acknowledged with status `00` and not
-stored — not after the write, not for the rest of the session, not once in
-roughly fifteen attempts across a day. Reading them back immediately after the
-write returns the factory value every time.
+**Measured 2026-09-21 and 22.** `0x2003` and `0x2004` are acknowledged with
+status `00` and not stored — not after the write, not for the rest of the
+session, not once in dozens of attempts across two days. Reading them back
+immediately after the write returns the factory value every time.
 
-**Once the app has set a location, the lock lifts — until the next power cut.**
+**The cause is that nothing had told the lamp what time it is.** `0x80` carries
+a unix time as a little-endian `uint32` and the lamp answers `0x53`; send it
+first and the coordinates land. Verified on a CF06 deliberately unplugged: it
+read back `000000200fcb4940` / `000000c088d200c0`, took `80 0eabb26a`, answered
+`53 0000`, then accepted `0x2003` **and read it back as `5917b7d100564840`**,
+with `0x2004` the same. Daylight ran immediately, 07:10-19:22.
+
+`0x2005` and `0x201d` describe a *time zone*; neither says what time it is.
+Without the time the lamp cannot turn a latitude into a sunrise, so a position
+is no use to it — which is why it discards coordinates while still taking a
+UTC offset seconds later, an asymmetry measured directly on 2026-09-22 at
+15:53. **A power cut takes the clock**, which is why unplugging the lamp is
+what triggers it.
+
+**`0x80` is not in `b50/c.java`'s routing table.** Like `0x90` and `0x93` it is
+built directly — `p60/y0.java` and `l50/n.java`, with `p60/l.java` parsing the
+`0x53` reply. Treating that table as the full message vocabulary is what hid
+this for two days.
+
+#### The set-up-gate story, and why it was wrong
+
+Everything below was written while the evidence pointed at a commissioning gate
+the MyDyson app had to lift, and it is kept because the observations are real
+even though the conclusion was not. **The app was never unlocking anything: it
+sets the clock at the start of every session**, so any write attempted after
+the app had been near the lamp worked, and any write attempted before it did
+not. That pattern held for two days and looked exactly like a gate.
+
+**Once the app has set a location, the lock appears to lift — until the next power cut.**
 Minutes after the app wrote its GPS fix, this plugin overwrote it with the
 configured coordinates, read them back, and the write verified. Same lamp, same
 session shape, same bytes as all the refused attempts.
@@ -517,6 +544,9 @@ rather than addresses.
 | `sc0/a.java`, `sc0/c.java` | turning coordinates into the place name the app displays |
 | `je0/a.java`, `bd0/f.java`, `bd0/c.java` | the year of birth: sealing it, reading it back, its status byte |
 | `q50/a.java` | the `SENSITIVE_STATE` HKDF info, and where the LTK is kept |
+| `p60/y0.java`, `l50/n.java`, `p60/l.java` | the clock: `0x80` out, `0x53` back |
+| `e50/p.java`, `j50/q.java`, `m60/a.java` | the beacon UUIDs: `0x51` ask, `0x52` answer, `0x50` set |
+| `x40/c.java`, `j50/b.java` | the app-active status, `0x30` |
 | `t50/a.java`, `t50/b.java`, `t50/c.java` | the cipher, the HKDF, and encrypt-then-MAC |
 
 `b50/c.java` is the useful one for orientation: it routes each message type to a
@@ -529,6 +559,28 @@ characteristic, which is how the two channels separate.
 
 The attribute types this client uses (`0x90`, `0x93`) are not in those lists;
 they are built directly in `he0`, which is why they were not found by guessing.
+**Neither is `0x80`, the clock** (`p60/y0.java`, `l50/n.java`), and reading the
+table as the whole vocabulary cost two days — see above. Note also that the
+`80` in the list is decimal and means `0x50`, the beacon, which helped the
+confusion along.
+
+### What arrives unasked, and what has to be asked for
+
+`0x96` subscribes to an attribute: the type, the attribute, and a zero byte.
+The lamp answers `0x98`, and from then on sends `0x97` whenever that attribute
+changes.
+
+```
+→ 96 13 20 00     subscribe to daylight
+← 98 13 20        subscribed
+← 97 13 20 01 01  daylight is on
+```
+
+**Without subscribing the lamp reports almost nothing** — two `0x97`s against
+952 answered reads across this client's logs, where an iOS capture shows the
+app subscribing to five attributes on every connection and getting a report for
+each within a second. The client now subscribes to daylight and the three
+presets, which is what the app does.
 
 ### What the app does on every connect, in order
 

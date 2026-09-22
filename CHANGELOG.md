@@ -5,6 +5,50 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The lamp is told the time, and that is why it now keeps its location.**
+  Every connection begins by sending the current time (`0x80`), which this
+  plugin had never done. Without it the lamp discards a write to its
+  coordinates while acknowledging it, and daylight tracking cannot run — it
+  loses the clock whenever it loses power, so a lamp switched off at the wall
+  overnight woke up in that state every morning. Verified on a deliberately
+  unplugged CF06: it read back the factory coordinates and refused the write;
+  with the clock sent first it took them, read them back, and tracked daylight
+  from 07:10 to 19:22.
+
+  **This retires the "set-up gate" described since 1.4.4.** There was none. The
+  MyDyson app was never unlocking the lamp — it sets the clock at the start of
+  every session, so anything attempted after the app had been near the lamp
+  worked and anything before it did not, for two days. `0x2005` and the
+  daylight-saving rules, which this plugin had been writing all along, describe
+  a *time zone*; nothing said what time it is, and without that the lamp cannot
+  turn a latitude into a sunrise. **A lamp can now be unplugged overnight
+  without needing the app in the morning.**
+
+### Added
+
+- **Settings changed at the lamp or in the app are noticed at once.** The
+  plugin now subscribes (`0x96`) to daylight tracking and the three preset
+  modes, as the app does. Unsubscribed, the lamp reports almost nothing — two
+  reports against 952 answered reads across this plugin's logs — so a button
+  pressed on the lamp's base went unnoticed until the next poll.
+
+### Changed
+
+- **The advice on a refused location no longer describes a gate that does not
+  exist.** It said to go through the app's set-up; that was wrong, and on a
+  lamp whose clock is now set a refusal is genuinely unexpected, so the message
+  says so and asks for the log.
+
+- `docs/PROTOCOL.md` records `0x80`/`0x53` and `0x96`/`0x97`/`0x98`, and keeps
+  the set-up-gate section with its reasoning marked as mistaken — the
+  observations were real, the conclusion was not. It also notes why `0x80` was
+  missed: it is absent from `b50/c.java`'s routing table, like `0x90` and
+  `0x93`, and that table was treated as the whole vocabulary.
+
 ## [1.5.3] — 2026-09-22
 
 ### Fixed

@@ -44,6 +44,8 @@ import {
   attributeValue,
   buildAgeAdjustWrite,
   buildAttributeRead,
+  buildAttributeSubscribe,
+  buildClockWrite,
   buildCoordinateWrite,
   buildDaylightWrite,
   buildPresetWrite,
@@ -220,27 +222,28 @@ const POLL_INTERVAL_MS = 60_000;
 const ATTRIBUTE_REPLY_MS = 2_000;
 
 /**
- * What to tell a user whose lamp will not take its location.
+ * What to tell a user whose lamp still will not take its location.
  *
- * The refusal is a set-up gate, not a fault: a lamp that has never been through
- * the MyDyson app's location set-up rejects these while acknowledging them, and
- * one pass through the app lifts it — until the lamp next loses power, which
- * puts the gate back. See {@link FACTORY_LOCATION_REMEDY} for that case, which
- * is the one a user is far more likely to hit.
+ * Since 1.6.0 the plugin sets the lamp's clock before writing coordinates,
+ * which is what a refusal always turned out to be. If one happens anyway the
+ * old advice — "go through the app's set-up" — is worse than nothing, because
+ * it describes a gate that does not exist. So this says what is actually known
+ * and asks for the log rather than inventing a remedy.
  */
 const LOCATION_REMEDY =
-  'Lamps refuse this until they have been through the location set-up in the MyDyson app; ' +
-  'one pass through it lifts that for good. See the README.';
+  'The lamp is told the time before this write, which is what a refusal always turned out to ' +
+  'be, so this is unexpected. Setting the location once in the MyDyson app will fix the lamp; ' +
+  'please report the log so the real cause can be found.';
 
 /**
  * Dyson's own coordinates in Malmesbury, which every lamp holds from the
  * factory and returns to whenever it loses power.
  *
- * Measured 2026-09-22: a lamp that had accepted this plugin's coordinates two
- * hours earlier read these back after being unplugged, and refused the write
- * again. So the set-up gate is not lifted for good after all — it is lifted
- * until the next power cut, and a lamp reading these is one whose daylight
- * tracking has stopped working rather than one that was never set up.
+ * A lamp reading these has lost its location, which until 1.6.0 it could not
+ * be given back without the MyDyson app. It now can: the plugin sets the
+ * clock first and the write lands. Kept because the pair is still worth
+ * recognising — it is the difference between a lamp that has lost its
+ * position and one that has moved.
  */
 const FACTORY_LOCATION = { latitude: 51.5864, longitude: -2.1028 };
 
@@ -262,9 +265,9 @@ const FACTORY_LOCATION_EPSILON = 1e-3;
  */
 const FACTORY_LOCATION_REMEDY =
   'The lamp is back at its factory coordinates in Malmesbury, which is what happens when it ' +
-  'loses power — daylight tracking will not run until it has a real location again. Open the ' +
-  'MyDyson app once and let it set the location; this plugin can write it again afterwards. ' +
-  'See the README.';
+  'loses power. This plugin now sets the lamp\'s clock before writing a location, which is what ' +
+  'a lamp in this state was always missing, so the write below should land. If it does not, ' +
+  'please report the log. See the README.';
 
 /**
  * Attempts at a write the lamp drops rather than refuses.
@@ -306,6 +309,15 @@ const COORDINATE_WRITE_GAP_MS = 300;
  * lamp on every connection over a value that only differs in its last bit.
  */
 const COORDINATE_EPSILON = 1e-6;
+
+/**
+ * The attributes worth being told about, the same five the app subscribes to.
+ *
+ * Daylight tracking and the three preset modes: the settings a person can
+ * change at the lamp itself or from the app, where waiting for the next poll
+ * shows HomeKit a stale switch.
+ */
+const REPORTED_ATTRIBUTES = [ATTR_DAYLIGHT, PRESETS.study, PRESETS.relax, PRESETS.precision];
 
 /** Attempts at subscribing to a characteristic before falling back to the poll. */
 const SUBSCRIBE_ATTEMPTS = 3;
@@ -884,6 +896,10 @@ export class DysonMorphLamp extends EventEmitter {
     this.desired = { ...this.state };
     await this.subscribeToState();
     await this.readDaylight();
+    await this.subscribeToAttributes();
+    // Before the location, always: the lamp will not keep a position until it
+    // knows what time it is. See {@link syncClockTime}.
+    await this.syncClockTime();
     await this.syncLocation();
     await this.syncClock();
     await this.syncDay();
@@ -1158,15 +1174,13 @@ export class DysonMorphLamp extends EventEmitter {
    * controls, and rewriting them every connection would be churn on a channel
    * shared with the mode switches.
    *
-   * **A lamp behind the set-up gate refuses these**, acknowledging the write
-   * with a success status and keeping the factory coordinates — measured on a
-   * CF06 on 2026-09-22, roughly fifteen attempts across a day, none of them
-   * stored. One pass through the app's set-up lifts it, and a power cut puts it
-   * back: the same lamp took this plugin's write minutes after the app had run,
-   * and refused it again two hours later after being unplugged. So the write is
-   * attempted, read back, and a refusal is reported as one rather than guessed
-   * at — see {@link writeAndVerify}, and {@link FACTORY_LOCATION} for telling
-   * the two cases apart.
+   * **A lamp that does not know the time discards these**, acknowledging the
+   * write with a success status and keeping the factory coordinates — measured
+   * on a CF06 across 2026-09-21 and 22, dozens of attempts, none of them
+   * stored. For two days that looked like a set-up gate the MyDyson app had to
+   * lift; it was the clock the app sets on connecting, and {@link
+   * syncClockTime} now sends it before this runs. The write is still attempted,
+   * read back and reported honestly — see {@link writeAndVerify}.
    */
   private async syncLocation(): Promise<void> {
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -1239,6 +1253,58 @@ export class DysonMorphLamp extends EventEmitter {
         ? ` (was ${describeLocation(current as LampLocation)})`
         : '';
     this.log.info(`Location of ${this.mac} set to ${describeLocation(wanted)}${was}`);
+  }
+
+  /**
+   * Tell the lamp what time it is, every time we connect.
+   *
+   * This is what the MyDyson app does first on every connection, and not doing
+   * it was the cause of two days of "the lamp refuses its location": without a
+   * clock the lamp discards `0x2003`/`0x2004` while acknowledging the write,
+   * and keeps taking a UTC offset in the same breath, because an offset is a
+   * time zone and not a time. It loses the clock whenever it loses power.
+   *
+   * Sent unconditionally rather than compared first: there is nothing to read
+   * back, the lamp's own notion of now is not exposed, and a clock is cheap.
+   * The `0x53` reply is not waited for — nothing downstream depends on it, and
+   * the location write that follows verifies itself.
+   */
+  private async syncClockTime(): Promise<void> {
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+    try {
+      await this.writeMessage(CHAR_WRITE_ATTR, buildClockWrite());
+    } catch (error) {
+      this.log.debug(`Could not set the clock of ${this.mac}: ${describeError(error)}`);
+    }
+  }
+
+  /**
+   * Ask the lamp to report the settings we care about when they change.
+   *
+   * Unsubscribed it reports almost nothing — two `0x97`s against 952 answered
+   * reads across this plugin's logs — so a change made at the lamp's own base
+   * or in the app went unnoticed until the next poll. The app subscribes to
+   * these same five every session.
+   *
+   * Best-effort: a subscription that does not take costs a slower notice of a
+   * change, not a broken accessory, so a failure is logged and the connection
+   * carries on.
+   */
+  private async subscribeToAttributes(): Promise<void> {
+    if (!this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+    for (const attribute of REPORTED_ATTRIBUTES) {
+      try {
+        await this.writeMessage(CHAR_WRITE_ATTR, buildAttributeSubscribe(attribute));
+      } catch (error) {
+        this.log.debug(
+          `Could not subscribe to 0x${attribute.toString(16)} on ${this.mac}: ${describeError(error)}`,
+        );
+      }
+    }
   }
 
   /**

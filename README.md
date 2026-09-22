@@ -252,27 +252,24 @@ lamp was set up on, and never asks again — so a lamp added through the app
 already knows, and one that has moved house still believes it is at the old
 address.
 
-> **A lamp that has never been set up in the MyDyson app will not accept a
-> location from anything else.** It answers the write with a success status and
-> keeps the factory coordinates — measured on a CF06 on 2026-09-22, roughly
-> fifteen writes across a day, every one acknowledged and none of them stored.
-> Daylight tracking cannot run in that state, and the lamp says so only through
-> a small LED at its daylight button.
+> **A lamp that does not know what time it is will not keep a location.** It
+> answers the write with a success status and keeps the factory coordinates,
+> and daylight tracking cannot run — the lamp says so only through a small LED
+> at its daylight button. The lamp loses its clock whenever it loses power, so
+> one switched off at the wall overnight wakes up in that state every morning.
 >
-> **Set the location once in the app and the lock lifts — until the lamp next
-> loses power.** The same lamp accepted the next write from this plugin minutes
-> later. But unplugging it puts the factory coordinates back and the lock with
-> them: measured on 2026-09-22, a lamp that had taken the write two hours
-> earlier read 51.58640, -2.10280 again after a power cut and refused it just
-> as before. **So a lamp that is switched off at the wall overnight needs one
-> pass through the app each morning before daylight tracking will run.** The
-> UTC offset goes the same way; the plugin rewrites that one itself. What does
-> survive is the year of birth and the day in `dayStart` / `dayEnd`.
+> **The plugin sets the lamp's clock on every connection, so this is handled.**
+> A lamp fresh off the mains takes its coordinates and starts tracking daylight
+> without the MyDyson app being involved.
 >
-> The fields below therefore work on a lamp that has been through the app's
-> set-up and has not been unplugged since. If yours refuses, the log names
-> which of the two cases it is, and one pass through the app is the fix for
-> both.
+> This took two days to find, and for most of it the evidence pointed at a
+> set-up gate that had to be lifted in the app — a lamp only ever accepted a
+> location *after* the app had been near it. The app was not unlocking
+> anything. It sets the clock at the start of every session, so everything that
+> happened afterwards worked. `0x2005` and the daylight-saving rules, which
+> this plugin had been writing all along, describe a *time zone* and never say
+> what time it is; without the time, a latitude cannot be turned into a
+> sunrise, and the lamp has no use for one.
 
 The two fields exist to set the coordinates without the app, and to correct them
 afterwards. Leave them empty and the plugin does not touch what the lamp holds —

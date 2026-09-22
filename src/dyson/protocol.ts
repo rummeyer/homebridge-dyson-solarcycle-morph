@@ -75,6 +75,16 @@ export const MsgType = {
   USER_CONFIRMED: 0x0d,
   /** ← lamp: authentication complete */
   CONNECTION_ESTABLISHED: 0x26,
+  /**
+   * → lamp: what time it is now, on {@link CHAR_WRITE_ATTR}.
+   *
+   * See {@link buildClockWrite}. Not in `b50/c.java`'s routing table, which is
+   * how it went unnoticed here for so long — like `0x90` and `0x93` it is
+   * built directly, in `p60/y0.java` and `l50/n.java`.
+   */
+  SET_CLOCK: 0x80,
+  /** ← lamp: the clock was taken (`p60/l.java`) */
+  CLOCK_ACK: 0x53,
   /** → lamp: ask for an attribute's value, on {@link CHAR_WRITE_ATTR} */
   ATTRIBUTE_GET: 0x90,
   /** ← lamp: the value asked for */
@@ -83,8 +93,12 @@ export const MsgType = {
   ATTRIBUTE_SET: 0x93,
   /** ← lamp: an attribute write was accepted, or was not */
   ATTRIBUTE_ACK: 0x94,
+  /** → lamp: report this attribute from now on. See {@link buildAttributeSubscribe}. */
+  ATTRIBUTE_SUBSCRIBE: 0x96,
   /** ← lamp: an attribute changed, on {@link CHAR_WRITE_ATTR} */
   ATTRIBUTE_REPORT: 0x97,
+  /** ← lamp: the subscription is in place */
+  SUBSCRIBE_ACK: 0x98,
 } as const;
 
 /**
@@ -526,4 +540,44 @@ export function miredToKelvin(mired: number): number {
 export function kelvinToMired(kelvin: number): number {
   const clamped = Math.min(MAX_KELVIN, Math.max(MIN_KELVIN, kelvin));
   return Math.round(1_000_000 / clamped);
+}
+
+/**
+ * Tell the lamp what time it is.
+ *
+ * `0x80` and a unix time as a little-endian `uint32`; the lamp answers `0x53`.
+ *
+ * **Without this the lamp will not keep a location.** It discards a write to
+ * `0x2003`/`0x2004` while acknowledging it, and goes on accepting a UTC offset
+ * in the same session — because the offset and the daylight-saving rules
+ * describe a *time zone*, and none of them says what time it is. A lamp that
+ * does not know cannot turn a latitude into a sunrise, so a position is no use
+ * to it. A power cut takes the clock, which is why unplugging the lamp was what
+ * triggered it.
+ *
+ * Measured 2026-09-22: a lamp fresh off the mains read back the Malmesbury
+ * factory pair and refused the coordinates; sending this first, it took them
+ * and read them back, and daylight tracking ran immediately. The MyDyson app
+ * sends it at the start of every connection, which is the whole reason a lamp
+ * "had to be set up in the app" before this plugin could place it.
+ */
+export function buildClockWrite(when: Date = new Date()): Buffer[] {
+  const seconds = Buffer.alloc(4);
+  seconds.writeUInt32LE(Math.floor(when.getTime() / 1000), 0);
+  return fragmentMessage(MsgType.SET_CLOCK, seconds);
+}
+
+/**
+ * Ask the lamp to report an attribute whenever it changes.
+ *
+ * `0x96`, the attribute, and a zero byte; the lamp answers `0x98` and then
+ * sends `0x97` for that attribute from then on. **Unsubscribed, it reports
+ * almost nothing** — two `0x97`s against 952 answered reads in this plugin's
+ * own logs, where the app subscribes to five attributes every session and gets
+ * a report for each within a second.
+ */
+export function buildAttributeSubscribe(attribute: number): Buffer[] {
+  const body = Buffer.alloc(3);
+  body.writeUInt16LE(attribute, 0);
+  return fragmentMessage(MsgType.ATTRIBUTE_SUBSCRIBE, body);
 }
