@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The Daylight, Auto Brightness and Movement switches no longer spring back
+  when the lamp is off.** The lamp takes none of the three while it is not lit:
+  the write goes nowhere, the lamp goes on reporting the mode it was already in,
+  and a moment later the Home app put the switch back where it had been. A
+  switch flipped on an off lamp now stays where it was put, and the mode is
+  written when the lamp comes on — by the Home app, the MyDyson app or the
+  button on its base. Nothing is held over a restart: a plugin starting up takes
+  all three from the lamp. With the lamp on, everything is as it was.
+
 ## [1.4.1] — 2026-09-21
 
 ### Changed

@@ -25,6 +25,8 @@ import {
 } from './crypto.js';
 import { Debouncer } from './debounce.js';
 import { Pacer } from './pace.js';
+import { PendingModes } from './pending.js';
+import type { ModeField } from './pending.js';
 import { OperationQueue } from './queue.js';
 import { planReconciliation } from './reconcile.js';
 import { SettleWindow } from './settle.js';
@@ -168,6 +170,25 @@ const RECONCILE_DELAY_MS = 900;
  * news worth publishing.
  */
 const SETTLE_MS = 3_000;
+
+/**
+ * How long after the lamp lights to write the modes held back while it was off.
+ *
+ * Two reasons, either of which would be enough. A lamp switched on from HomeKit
+ * is still being switched on: {@link DysonMorphLamp.setPower} clears the write
+ * queue on its way past, so anything scheduled in the same breath would be
+ * cleared with it, and the power write itself has yet to go out. And a lamp
+ * that has only just been told to light is no likelier to take a mode than one
+ * that is still off — the wait is what makes these writes land at all.
+ */
+const POWER_ON_SETTLE_MS = 1_500;
+
+/** What each mode is called in the log. */
+const MODE_LABELS: Record<ModeField, string> = {
+  daylight: 'Daylight mode',
+  autoBrightness: 'Auto brightness',
+  movement: 'Movement mode',
+};
 
 /**
  * How often to read the lamp's state as a backstop.
@@ -356,6 +377,8 @@ export class DysonMorphLamp extends EventEmitter {
   private daylightReported = false;
   private readonly reconciles = new Debouncer(RECONCILE_DELAY_MS, (task, key) => this.enqueue(task, key));
   private readonly settling = new SettleWindow(SETTLE_MS);
+  /** Mode changes made while the lamp was off, waiting for it to light. */
+  private readonly pending = new PendingModes();
 
   /** Whether the running scan is one we started and must clean up. */
   private discoveryIsOurs = false;
@@ -492,23 +515,14 @@ export class DysonMorphLamp extends EventEmitter {
     await this.writes.schedule(CHAR_BRIGHTNESS_LM, () => this.writeUint16(CHAR_BRIGHTNESS_LM, lumens));
   }
 
-  /**
-   * Turn daylight tracking on or off.
-   *
-   * Goes out on the attribute channel, which is the one part of this lamp that
-   * acknowledges a write. Not reconciled all the same: the lamp announces the
-   * mode itself whenever it changes, from here, from the app, from the button
-   * on its base, or because setting a value by hand ended the tracking, so the
-   * report is a better answer than anything read back would be.
-   */
   /** Turn the lamp's own brightness trimming on or off. */
   async setAutoBrightness(on: boolean): Promise<void> {
-    await this.setFlag(CHAR_AUTO_BRIGHTNESS, 'autoBrightness', on, 'Auto brightness');
+    await this.setFlag(CHAR_AUTO_BRIGHTNESS, 'autoBrightness', on);
   }
 
   /** Turn movement-triggered lighting on or off. */
   async setMovement(on: boolean): Promise<void> {
-    await this.setFlag(CHAR_MOVEMENT, 'movement', on, 'Movement mode');
+    await this.setFlag(CHAR_MOVEMENT, 'movement', on);
   }
 
   /**
@@ -518,18 +532,21 @@ export class DysonMorphLamp extends EventEmitter {
    * covered afterwards: these characteristics notify, so the lamp corrects us
    * within a moment if the write did not land.
    */
-  private async setFlag(
-    uuid: string,
-    field: 'autoBrightness' | 'movement',
-    on: boolean,
-    label: string,
-  ): Promise<void> {
+  private async setFlag(uuid: string, field: 'autoBrightness' | 'movement', on: boolean): Promise<void> {
+    const label = MODE_LABELS[field];
     this.requireConnection();
     if (!this.chars[uuid]) {
       throw new Error(`this lamp does not expose ${label.toLowerCase()}`);
     }
     this.log.debug(`${label} ${on ? 'on' : 'off'} requested`);
     this.patchState({ [field]: on });
+    if (this.holdUntilLit(field, on)) {
+      return;
+    }
+    await this.writeFlag(uuid, on);
+  }
+
+  private async writeFlag(uuid: string, on: boolean): Promise<void> {
     await this.writes.schedule(uuid, () => this.write(uuid, Buffer.from([on ? 0x01 : 0x00])));
   }
 
@@ -556,6 +573,15 @@ export class DysonMorphLamp extends EventEmitter {
     );
   }
 
+  /**
+   * Turn daylight tracking on or off.
+   *
+   * Goes out on the attribute channel, which is the one part of this lamp that
+   * acknowledges a write. Not reconciled all the same: the lamp announces the
+   * mode itself whenever it changes, from here, from the app, from the button
+   * on its base, or because setting a value by hand ended the tracking, so the
+   * report is a better answer than anything read back would be.
+   */
   async setDaylight(on: boolean): Promise<void> {
     this.requireConnection();
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -563,9 +589,77 @@ export class DysonMorphLamp extends EventEmitter {
     }
     this.log.debug(`Daylight mode ${on ? 'on' : 'off'} requested`);
     this.patchState({ daylight: on });
+    if (this.holdUntilLit('daylight', on)) {
+      return;
+    }
+    await this.writeDaylight(on);
+  }
+
+  private async writeDaylight(on: boolean): Promise<void> {
     await this.writes.schedule(CHAR_WRITE_ATTR, () =>
       this.writeMessage(CHAR_WRITE_ATTR, buildDaylightWrite(on)),
     );
+  }
+
+  /**
+   * Keep a mode change back while the lamp is off, rather than losing it.
+   *
+   * An off lamp discards these three silently and goes on reporting the old
+   * value, so writing one now would achieve nothing except a switch that
+   * springs back in the Home app a moment after it was flipped. The switch is
+   * left showing what was asked for — {@link patchState} has already published
+   * it — and the value is written when the lamp lights.
+   *
+   * @returns whether the change was held, in which case nothing is written.
+   */
+  private holdUntilLit(field: ModeField, value: boolean): boolean {
+    if (this.state.on) {
+      return false;
+    }
+    this.pending.hold(field, value);
+    this.log.info(
+      `${MODE_LABELS[field]} ${value ? 'on' : 'off'} will be set when ${this.mac} is switched on; ` +
+        'an off lamp does not take it',
+    );
+    return true;
+  }
+
+  /**
+   * Write the modes that were held back while the lamp was off.
+   *
+   * Called whenever the lamp lights, whoever lit it — HomeKit, the MyDyson app
+   * or the button on its base — and once more on connecting, for the lamp that
+   * was switched on while the link was down.
+   */
+  private async flushPending(): Promise<void> {
+    if (this.pending.size === 0) {
+      return;
+    }
+    await sleep(POWER_ON_SETTLE_MS);
+    if (!this.connected || !this.state.on) {
+      // Switched off again, or the link went, before the modes could go out.
+      // They stay held; the next time the lamp lights they go with it.
+      return;
+    }
+    for (const [field, value] of this.pending.take()) {
+      this.log.info(`${this.mac} is on — setting ${MODE_LABELS[field].toLowerCase()} ${value ? 'on' : 'off'} now`);
+      try {
+        await this.applyMode(field, value);
+      } catch (error) {
+        this.log.warn(`Could not set ${MODE_LABELS[field].toLowerCase()} on ${this.mac}: ${describeError(error)}`);
+      }
+    }
+  }
+
+  private async applyMode(field: ModeField, value: boolean): Promise<void> {
+    switch (field) {
+      case 'daylight':
+        return this.writeDaylight(value);
+      case 'autoBrightness':
+        return this.writeFlag(CHAR_AUTO_BRIGHTNESS, value);
+      case 'movement':
+        return this.writeFlag(CHAR_MOVEMENT, value);
+    }
   }
 
   async setColorTemperature(kelvin: number): Promise<void> {
@@ -706,6 +800,10 @@ export class DysonMorphLamp extends EventEmitter {
     await this.syncAgeAdjust();
     await this.subscribeToSignal();
     this.startPolling();
+    // The lamp may have been lit while we were away, in which case its power
+    // never changed as far as this session is concerned and nothing above will
+    // have noticed.
+    void this.flushPending();
     const rssi = this.lastRssi;
     this.resetSignalWindow(rssi);
     this.log.info(
@@ -1204,7 +1302,7 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   private async refreshState(): Promise<void> {
-    this.patchState(await this.readState());
+    this.patchState(this.pending.filter(await this.readState()));
   }
 
   /** Read what the lamp currently reports. Values it will not give up are absent. */
@@ -1563,7 +1661,9 @@ export class DysonMorphLamp extends EventEmitter {
       this.log.debug(`Colour temperature moved to ${filtered.kelvin}K unasked — the lamp is tracking daylight`);
       filtered.daylight = true;
     }
-    this.patchState(filtered);
+    // A mode still waiting for the lamp to light is ours, not the lamp's: what
+    // it reports is the value it has yet to be told to change.
+    this.patchState(this.pending.filter(filtered));
   }
 
   private patchState(patch: Partial<LampState>): void {
@@ -1572,10 +1672,17 @@ export class DysonMorphLamp extends EventEmitter {
     }
     const next = { ...this.state, ...patch };
     const changed = (Object.keys(patch) as (keyof LampState)[]).some((k) => this.state[k] !== next[k]);
+    const lit = !this.state.on && next.on;
     this.state = next;
     if (changed) {
       this.log.debug(`State now ${describeState(next)}`);
       this.emit('state', next);
+    }
+    // The single point every power change passes through, whether it came from
+    // HomeKit, from a notification or from the poll — so the modes held back
+    // while the lamp was off go out no matter who switched it on.
+    if (lit) {
+      void this.flushPending();
     }
   }
 }

@@ -134,6 +134,15 @@ job — turn Auto Brightness off if you would rather it stayed put.
 turns itself off when you do. That is the lamp's own behaviour, not something
 the plugin decides. Flip the switch back on to resume.
 
+**The three mode switches work while the lamp is off**, though the lamp itself
+will not have them until it is lit — it takes none of the three while it is off.
+So a switch flipped on a dark lamp stays where you put it and is written the
+moment the lamp comes on, whether you switch it on from the Home app, from the
+MyDyson app or at the lamp. Turning Movement on last thing at night therefore
+does what you meant by it. Nothing is kept over a restart: a plugin starting up
+takes all three from the lamp, which is the only thing that knows what it is
+really doing.
+
 **Changes made at the lamp appear in the Home app**, usually straight away.
 
 **Out of range, the lamp shows as *No Response*** rather than the last thing it
