@@ -280,8 +280,15 @@ established.
 
 `0x2023` and `0x2024` are the day the user can set by hand — the settings screen
 calls them "when your day starts and ends", and the lamp falls back to its
-baseline once the day is over, natural or custom. Probed on 2026-09-22 by
-writing 490 and reading it back: taken immediately, then restored to 480.
+baseline once the day is over, natural or custom. Two-byte minute counts,
+little-endian, written by `he0/u.java`. Probed on 2026-09-22 by writing 490 and
+reading it back: taken immediately, then restored to 480 — and notably taken
+while the same lamp was still refusing its own coordinates, which is what first
+showed the refusal to be particular rather than general.
+
+The lamp has no way to state a day that runs past midnight, so an end before the
+start is not a night shift but a day of negative length; the plugin refuses it
+in configuration rather than writing it.
 
 ### The location is refused until the app has set one up
 

@@ -162,6 +162,8 @@ Everything except the lights is optional.
 | **Lights → Latitude**, **Longitude** | Where the lamp stands, in decimal degrees. Optional; set both or neither |
 | **Lights → Year of birth** | Turns on the lamp's age adjustment. Optional |
 | **Lights → Apply the age adjustment** | The lamp's own switch for it. On by default |
+| **Lights → Day starts at** | Optional. Replaces the real sunrise, as `HH:MM` |
+| **Lights → Day ends at** | Optional. Replaces the real sunset |
 | **Lights → Expose daylight tracking** | The Daylight switch. On by default |
 | **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
 | **Lights → Expose movement mode** | The Movement switch. On by default |
@@ -217,6 +219,8 @@ the lamp. The example above shows every key at once, which no real config needs.
 | `lights[].longitude` | number | unset | Decimal degrees, -180 to 180 |
 | `lights[].yearOfBirth` | integer | unset | 1900 to this year |
 | `lights[].ageAdjust` | boolean | `true` | Only read when `yearOfBirth` is set |
+| `lights[].dayStart` | string | | `HH:MM`. Both or neither, end after start |
+| `lights[].dayEnd` | string | | |
 | `lights[].daylightSwitch` | boolean | `true` | |
 | `lights[].autoBrightnessSwitch` | boolean | `true` | |
 | `lights[].movementSwitch` | boolean | `true` | |
@@ -285,6 +289,26 @@ accurate to the nearest town, which is all a sunrise needs, and wrong if the
 connection goes out through a VPN. Nothing is sent to either service: they read
 the public address the request arrives from, which is what every site this
 machine contacts already sees. Check what it filled in before saving.
+
+### A day of your own
+
+Daylight tracking follows the real sunrise and sunset by default. Two optional
+fields replace that with a day you choose:
+
+```json
+"dayStart": "08:00",
+"dayEnd": "18:00"
+```
+
+The lamp keeps its warm-to-cool-to-warm shape and fits it between those two
+times instead of the sun's, and returns to its baseline settings once the day is
+over. It is the same setting the MyDyson app offers next to the location.
+Supply both or neither, and the end has to come after the start — the lamp
+stores two plain minute counts and has no way to express a day that runs past
+midnight. Leave them out and it follows the sun.
+
+These the lamp accepts readily, unlike its location: they were taken on a lamp
+that was refusing everything else at the time.
 
 ### And what time it is there
 

@@ -1,6 +1,7 @@
 import { describeError } from './errors.js';
 import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 
+import { parseTimeOfDay } from './config.js';
 import type { ResolvedLightConfig } from './config.js';
 import { DysonMorphLamp } from './dyson/lamp.js';
 import { kelvinToMired, miredToKelvin, MAX_KELVIN, MIN_KELVIN, PRESETS } from './dyson/protocol.js';
@@ -69,6 +70,12 @@ export class MorphAccessory {
       location:
         config.latitude !== undefined && config.longitude !== undefined
           ? { latitude: config.latitude, longitude: config.longitude }
+          : undefined,
+      // Both or neither again, and validation has already refused half a day,
+      // so one of them being a time means the other is too.
+      day:
+        config.dayStart !== undefined && config.dayEnd !== undefined
+          ? { start: parseTimeOfDay(config.dayStart)!, end: parseTimeOfDay(config.dayEnd)! }
           : undefined,
       // The switch only means anything next to a year, so the pair travels
       // together and defaults to on: setting a year and leaving the adjustment

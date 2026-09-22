@@ -320,6 +320,18 @@ export function buildDstRulesWrite(rules: Buffer): Buffer[] {
   return buildAttributeWrite(ATTR_DST_RULES, rules);
 }
 
+/**
+ * Tell the lamp when its day starts or ends, in minutes past midnight.
+ *
+ * Two bytes, little-endian, as the app writes them (`he0/u.java`). The same
+ * shape serves {@link ATTR_DAY_START} and {@link ATTR_DAY_END}.
+ */
+export function buildDayBoundaryWrite(attribute: number, minutes: number): Buffer[] {
+  const payload = Buffer.alloc(2);
+  payload.writeUInt16LE(minutes);
+  return buildAttributeWrite(attribute, payload);
+}
+
 /** Switch daylight tracking on or off. */
 export function buildDaylightWrite(on: boolean): Buffer[] {
   return buildAttributeWrite(ATTR_DAYLIGHT, Buffer.from([on ? 0x01 : 0x00]));

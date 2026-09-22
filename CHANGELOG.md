@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **The lamp's day can be set by hand.** Daylight tracking follows the real
+  sunrise and sunset for wherever the lamp is; `dayStart` and `dayEnd` replace
+  that with a day of your choosing, and the lamp fits its warm-to-cool-to-warm
+  shape between those instead. It is the setting the MyDyson app offers beside
+  the location, and the lamp takes it readily — these two were accepted on a
+  lamp that was refusing its own coordinates at the time.
+
+  Both or neither, as `HH:MM`, and the end has to come after the start: the lamp
+  holds two plain minute counts and cannot express a day that runs past
+  midnight. Left out, the sun decides as before.
+
 ## [1.4.4] — 2026-09-22
 
 ### Changed

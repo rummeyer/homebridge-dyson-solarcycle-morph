@@ -52,10 +52,13 @@ import {
   decodeYearOfBirth,
   encodeYearOfBirth,
   ATTR_AGE_ADJUST,
+  ATTR_DAY_END,
+  ATTR_DAY_START,
   ATTR_DST_RULES,
   ATTR_SUNRISE,
   ATTR_SUNSET,
   ATTR_UTC_OFFSET,
+  buildDayBoundaryWrite,
   buildDstRulesWrite,
   buildUtcOffsetWrite,
   ATTR_DAYLIGHT,
@@ -285,6 +288,18 @@ export interface LampState {
   preset: Preset | 'none';
 }
 
+/**
+ * A day of the user's own choosing, in minutes past midnight.
+ *
+ * The lamp normally takes its day from the real sunrise and sunset at its
+ * location; these replace that. It falls back to its baseline settings once the
+ * day is over, natural or custom.
+ */
+export interface LampDay {
+  start: number;
+  end: number;
+}
+
 /** Where the lamp is, in decimal degrees. */
 export interface LampLocation {
   latitude: number;
@@ -319,6 +334,11 @@ export interface LampOptions {
    */
   location?: LampLocation;
   /**
+   * When the lamp's day starts and ends. Left alone entirely when absent, so a
+   * lamp following the real sunrise keeps doing so.
+   */
+  day?: LampDay;
+  /**
    * Age adjustment for this lamp. Left alone entirely when absent, since only
    * the owner of the lamp can set it and it is nobody else's business.
    */
@@ -352,6 +372,7 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly accountId: string;
   private readonly adapterName: string | undefined;
   private readonly location: LampLocation | undefined;
+  private readonly day: LampDay | undefined;
   private readonly ageAdjust: LampAgeAdjust | undefined;
   /** Key for the lamp's one encrypted setting; not the handshake's. */
   private readonly sensitiveKey: Buffer;
@@ -433,6 +454,7 @@ export class DysonMorphLamp extends EventEmitter {
     this.accountId = options.accountId;
     this.adapterName = options.adapter;
     this.location = options.location;
+    this.day = options.day;
     this.ageAdjust = options.ageAdjust;
     this.sensitiveKey = deriveSensitiveKey(Buffer.from(options.ltk.replace(/[^0-9a-fA-F]/g, ''), 'hex'));
     this.log = options.log ?? noopLog;
@@ -809,6 +831,7 @@ export class DysonMorphLamp extends EventEmitter {
     await this.readDaylight();
     await this.syncLocation();
     await this.syncClock();
+    await this.syncDay();
     await this.reportDaylightHours();
     await this.syncAgeAdjust();
     await this.subscribeToSignal();
@@ -1211,6 +1234,39 @@ export class DysonMorphLamp extends EventEmitter {
         `Daylight-saving rules of ${this.mac} set to ${describeDstRules(wantedRules)}` +
           (rules ? ` (was ${rules.toString('hex')})` : ''),
       );
+    }
+  }
+
+  /**
+   * Put a day of the user's own choosing in the lamp.
+   *
+   * Two plain minute counts, and the lamp takes them readily — unlike its
+   * location, they were accepted on a lamp that was still refusing everything
+   * else. Written only on a difference, so a lamp already set this way is left
+   * alone.
+   */
+  private async syncDay(): Promise<void> {
+    const wanted = this.day;
+    if (!wanted || !this.chars[CHAR_WRITE_ATTR]) {
+      return;
+    }
+    for (const [attribute, minutes, label] of [
+      [ATTR_DAY_START, wanted.start, 'day start'],
+      [ATTR_DAY_END, wanted.end, 'day end'],
+    ] as const) {
+      const matches = (value: Buffer | undefined): boolean =>
+        value?.length === 2 && value.readUInt16LE(0) === minutes;
+      const current = await this.readAttribute(attribute, label);
+      if (matches(current)) {
+        continue;
+      }
+      const written = await this.enqueue(() =>
+        this.writeAndVerify(attribute, buildDayBoundaryWrite(attribute, minutes), matches, label),
+      );
+      if (written === true) {
+        const was = current?.length === 2 ? ` (was ${clock(current.readUInt16LE(0))})` : '';
+        this.log.info(`The ${label} of ${this.mac} is now ${clock(minutes)}${was}`);
+      }
     }
   }
 

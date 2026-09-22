@@ -44,6 +44,17 @@ export interface LightConfig {
   latitude?: number;
   longitude?: number;
   /**
+   * When the lamp's own day starts and ends, as `HH:MM`. Both or neither.
+   *
+   * Daylight tracking normally follows the real sunrise and sunset for the
+   * lamp's location. These override that with a day of your own choosing — the
+   * lamp holds them as minutes past midnight and falls back to its baseline
+   * settings once the day is over, natural or custom. Left out, whatever the
+   * lamp already holds is untouched.
+   */
+  dayStart?: string;
+  dayEnd?: string;
+  /**
    * Birth year of the main intended user, for the lamp's age adjustment.
    *
    * The lamp trims the brightness of its Study and Relax modes to suit older
@@ -58,6 +69,24 @@ export interface LightConfig {
    * adjustment off does nothing at all.
    */
   ageAdjust?: boolean;
+}
+
+/**
+ * Read an `HH:MM` time of day into minutes past midnight.
+ *
+ * @returns the minutes, or `undefined` when the string is not a time.
+ */
+export function parseTimeOfDay(value: string): number | undefined {
+  const match = /^([0-9]{1,2}):([0-9]{2})$/.exec(value.trim());
+  if (!match) {
+    return undefined;
+  }
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours > 23 || minutes > 59) {
+    return undefined;
+  }
+  return hours * 60 + minutes;
 }
 
 /** The oldest year the MyDyson app will offer, and so the oldest accepted here. */
@@ -139,6 +168,30 @@ export function validateLightConfig(light: Partial<LightConfig>, index: number):
   // than half-applied.
   if ((light.latitude === undefined) !== (light.longitude === undefined)) {
     problems.push(`${where} sets only one of latitude/longitude — supply both, or neither`);
+  }
+  // The lamp holds a start and an end, and a day with only one of them stated
+  // is not a day. Rejected rather than half-applied, as with the location.
+  if ((light.dayStart === undefined) !== (light.dayEnd === undefined)) {
+    problems.push(`${where} sets only one of dayStart/dayEnd — supply both, or neither`);
+  }
+  const day: Partial<Record<'dayStart' | 'dayEnd', number>> = {};
+  for (const field of ['dayStart', 'dayEnd'] as const) {
+    const value = light[field];
+    if (value === undefined) {
+      continue;
+    }
+    const minutes = typeof value === 'string' ? parseTimeOfDay(value) : undefined;
+    if (minutes === undefined) {
+      problems.push(`${where}.${field} must be a time of day like 08:00 (got ${JSON.stringify(value)})`);
+      continue;
+    }
+    day[field] = minutes;
+  }
+  if (day.dayStart !== undefined && day.dayEnd !== undefined && day.dayEnd <= day.dayStart) {
+    problems.push(
+      `${where}.dayEnd must come after dayStart, and the lamp has no way to state a day that runs past midnight ` +
+        `(got ${JSON.stringify(light.dayStart)} to ${JSON.stringify(light.dayEnd)})`,
+    );
   }
   if (light.yearOfBirth !== undefined) {
     const thisYear = new Date().getFullYear();
