@@ -567,3 +567,29 @@ test('switches named by an older version are renamed, unless they were renamed b
   api.emit('shutdown');
   await settle();
 });
+
+test('every light setting the schema defines is drawn by the layout', () => {
+  // A layout lists the fields it draws one by one, so a property added to the
+  // schema alone is silently invisible in the Homebridge UI. dayStart and
+  // dayEnd shipped that way in 1.5.0.
+  const schema = readJson('../config.schema.json');
+  const defined = Object.keys(schema.schema.properties.lights.items.properties);
+
+  const drawn = new Set<string>();
+  const walk = (node: unknown) => {
+    if (typeof node === 'string') {
+      const field = node.startsWith('lights[].') ? node.slice('lights[].'.length) : undefined;
+      if (field) drawn.add(field);
+      return;
+    }
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (node && typeof node === 'object') {
+      const record = node as Record<string, unknown>;
+      walk(record.key);
+      walk(record.items);
+    }
+  };
+  walk(schema.layout);
+
+  assert.deepEqual(defined.filter((field) => !drawn.has(field)), [], 'no light setting is left out of the layout');
+});

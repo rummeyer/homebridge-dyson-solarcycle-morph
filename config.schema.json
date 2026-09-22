@@ -168,6 +168,8 @@
                 "lights[].serial",
                 "lights[].latitude",
                 "lights[].longitude",
+                "lights[].dayStart",
+                "lights[].dayEnd",
                 "lights[].yearOfBirth",
                 "lights[].ageAdjust",
                 "lights[].daylightSwitch",

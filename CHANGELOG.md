@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The day fields now appear on the settings page.** `dayStart` and `dayEnd`
+  have been in `config.schema.json` since 1.5.0, but not in its `layout`, which
+  names the fields of a light one by one — and the settings page draws only
+  what the layout names. The two were valid in `config.json` and did nothing
+  visible in the UI, so a day could only be set by editing the file by hand. A
+  test now walks the layout and fails if any light setting the schema defines
+  is missing from it.
+
 ## [1.5.1] — 2026-09-22
 
 ### Fixed
