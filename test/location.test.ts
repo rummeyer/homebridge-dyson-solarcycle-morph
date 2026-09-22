@@ -117,3 +117,33 @@ test('a coordinate reply is read out of the frame', () => {
     LAMP_DEGREES.latitude,
   );
 });
+
+/**
+ * Read off the lamp at 15:53 on 2026-09-22, after it had been unplugged. It had
+ * accepted the Stuttgart pair two hours earlier and was refusing it again.
+ */
+const FACTORY_LATITUDE = Buffer.from('000000200fcb4940', 'hex');
+const FACTORY_LONGITUDE = Buffer.from('000000c088d200c0', 'hex');
+
+test('the factory pair is recognisable, and is not where anyone lives', () => {
+  const latitude = attributeValue(
+    reply(COORDINATES.latitude, FACTORY_LATITUDE),
+    COORDINATES.latitude,
+  )!.readDoubleLE(0);
+  const longitude = attributeValue(
+    reply(COORDINATES.longitude, FACTORY_LONGITUDE),
+    COORDINATES.longitude,
+  )!.readDoubleLE(0);
+
+  // Malmesbury, which every lamp holds from the factory and falls back to when
+  // it loses power. The plugin tells this pair apart to explain the refusal
+  // properly instead of claiming the lamp was never set up.
+  const factory = { latitude: 51.5864, longitude: -2.1028 };
+  const epsilon = 1e-3;
+  assert.ok(Math.abs(latitude - factory.latitude) < epsilon, 'the factory latitude is matched');
+  assert.ok(Math.abs(longitude - factory.longitude) < epsilon, 'the factory longitude is matched');
+
+  // And a lamp that does have a location must never be told it has none.
+  assert.ok(Math.abs(LAMP_DEGREES.latitude - factory.latitude) > epsilon);
+  assert.ok(Math.abs(LAMP_DEGREES.longitude - factory.longitude) > epsilon);
+});

@@ -259,11 +259,20 @@ address.
 > Daylight tracking cannot run in that state, and the lamp says so only through
 > a small LED at its daylight button.
 >
-> **Set the location once in the app and that lifts for good.** The same lamp
-> accepted the next write from this plugin minutes later, and has ever since.
-> So the fields below work on a lamp that has been through the app's set-up,
-> which is every lamp that was added the ordinary way; if yours refuses, the log
-> says so in as many words and one pass through the app is the whole fix.
+> **Set the location once in the app and the lock lifts — until the lamp next
+> loses power.** The same lamp accepted the next write from this plugin minutes
+> later. But unplugging it puts the factory coordinates back and the lock with
+> them: measured on 2026-09-22, a lamp that had taken the write two hours
+> earlier read 51.58640, -2.10280 again after a power cut and refused it just
+> as before. **So a lamp that is switched off at the wall overnight needs one
+> pass through the app each morning before daylight tracking will run.** The
+> UTC offset goes the same way; the plugin rewrites that one itself. What does
+> survive is the year of birth and the day in `dayStart` / `dayEnd`.
+>
+> The fields below therefore work on a lamp that has been through the app's
+> set-up and has not been unplugged since. If yours refuses, the log names
+> which of the two cases it is, and one pass through the app is the fix for
+> both.
 
 The two fields exist to set the coordinates without the app, and to correct them
 afterwards. Leave them empty and the plugin does not touch what the lamp holds —

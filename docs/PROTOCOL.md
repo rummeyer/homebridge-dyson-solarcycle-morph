@@ -315,10 +315,19 @@ stored — not after the write, not for the rest of the session, not once in
 roughly fifteen attempts across a day. Reading them back immediately after the
 write returns the factory value every time.
 
-**Once the app has set a location, the lock lifts and stays lifted.** Minutes
-after the app wrote its GPS fix, this plugin overwrote it with the configured
-coordinates, read them back, and the write verified. Same lamp, same session
-shape, same bytes as all the refused attempts.
+**Once the app has set a location, the lock lifts — until the next power cut.**
+Minutes after the app wrote its GPS fix, this plugin overwrote it with the
+configured coordinates, read them back, and the write verified. Same lamp, same
+session shape, same bytes as all the refused attempts.
+
+**Then the lamp was unplugged on purpose, and both came back.** At 15:53 the
+same lamp read `51.58640, -2.10280` again and refused the write exactly as it
+had all morning; `0x2005` was back to `1`. So the gate is not a one-time
+commissioning step that stays done — it is tied to something the lamp loses
+with power. What survives a power cut: the year of birth, and `0x2014`/`0x2015`,
+which still held 424/1170 (the day computed for Stuttgart) while the
+coordinates read Malmesbury. **The lamp therefore does not recompute the day on
+boot**, and a day written by hand is neither restored nor wiped for you.
 
 So this is a set-up gate rather than a protocol difference, which is consistent
 with everything else that was ruled out: the frame is identical (`jr/c.java`
@@ -340,8 +349,11 @@ Colour temperature standing still, and `0x2014`/`0x2015` reading zero, are the
 signals that carry.
 
 Those eight connections in one morning that each read back `51.5864, -2.1028`
-and wrote the configured pair again were not the lamp forgetting overnight, as
-first assumed — the lamp had simply never taken the write. See above.
+and wrote the configured pair again were first read as the lamp forgetting
+overnight, then re-read as a lamp that had never taken the write at all. The
+power-cut measurement above puts the two together: the lamp had never taken the
+write *because* it was unplugged each night, and each morning began behind the
+gate again.
 
 The lamp on this rig is taken off the mains overnight, and the year of birth
 survives that, so nothing here is a wholesale reset.
@@ -517,6 +529,36 @@ characteristic, which is how the two channels separate.
 
 The attribute types this client uses (`0x90`, `0x93`) are not in those lists;
 they are built directly in `he0`, which is why they were not found by guessing.
+
+### What the app does on every connect, in order
+
+`nd0/e.java`'s `a()` is the whole routine, and the order matters more than any
+single step:
+
+1. **Beacon UUIDs** — `e50/p.java` sends `0x51` to read them, and writes `0x50`
+   if they differ. `0x50` carries 32 bytes: two 16-byte UUIDs, `primary` then
+   `alternative`, built in `j50/q.java` from a cloud JSON object
+   (`c50/a.java`, `@SerializedName("primary")`/`("alternative")`).
+2. **Location** — latitude, 300 ms, longitude (`md0/k.java`, `md0/l.java`).
+3. **UTC offset** — `pd0/d.java`, from the phone's time zone.
+4. **Daylight-saving rules** — fetched over HTTP from Dyson, keyed by the
+   phone's time-zone id, then written.
+
+Two things follow from this that are worth having in mind before theorising
+about why a write of ours is refused and the app's is not:
+
+- **`0x50` and `0x51` go to `2DD10021`, the same characteristic as `0x90` and
+  `0x93`.** This client sends neither, so the beacon exchange is the one thing
+  the app does on that channel that we do not — and it happens *before* the
+  coordinates. That makes it the leading suspect for the set-up gate. It is a
+  suspect and nothing more: it has not been tested, and two other explanations
+  for the gate were confirmed and withdrawn on the same day.
+- **The app never reads the coordinates back.** `md0/k.java`'s chain ends at
+  `il0/d.java` case 14, which logs "messages sent successfully" and stops. So
+  the app cannot tell a stored write from a refused one either, and "it works
+  from the app" is always an inference from the lamp's behaviour. Location has
+  no entry in `he0/u.java`'s operation table at all; it exists only here, on
+  the connect path.
 
 **Searching the app for a UUID string finds nothing**, and that is a trap worth
 knowing about: `d50/g.java` builds them with

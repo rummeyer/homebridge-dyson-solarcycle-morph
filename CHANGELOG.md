@@ -5,6 +5,44 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A lamp that has lost its location is now told apart from one that was never
+  set up.** The advice for a refused location said the lamp had never been
+  through the MyDyson app's set-up — which reads as nonsense to someone whose
+  lamp worked yesterday. The plugin now recognises the factory coordinates in
+  Malmesbury, which a lamp returns to whenever it loses power, and says so:
+  that daylight tracking will not run until the lamp has a real location, and
+  that one pass through the app fixes it. A lamp sitting on the factory pair
+  with no location configured in the plugin is now warned about too, where
+  before `syncLocation` returned in silence — nothing about that state is
+  visible from the Home app, because the switch stays on and the colour simply
+  never moves.
+
+### Changed
+
+- **The documentation no longer claims the set-up gate lifts for good.**
+  Measured 2026-09-22 by unplugging the lamp on purpose: one that had taken
+  this plugin's coordinates two hours earlier read `51.58640, -2.10280` again
+  afterwards and refused the write exactly as it had all morning, with the UTC
+  offset back to `1` as well. **A lamp switched off at the wall overnight needs
+  one pass through the app each morning before daylight tracking will run.**
+  What survives is the year of birth and the day in `dayStart` / `dayEnd`,
+  which also settles an open question: the lamp does not recompute the day on
+  boot — `0x2014`/`0x2015` still held the times computed for the old location
+  while the coordinates read the factory pair.
+
+- **`docs/PROTOCOL.md` now records what the app does on every connect**, in
+  order: beacon UUIDs, location, UTC offset, daylight-saving rules. Message
+  `0x50`/`0x51` are identified — they carry two 16-byte beacon UUIDs from
+  Dyson's cloud, and they go to `2DD10021`, the same characteristic as the
+  attribute reads and writes this plugin uses. That makes the beacon exchange
+  the one thing the app does on that channel that this client does not, and
+  the leading suspect for the gate. Untested, and recorded as a suspect rather
+  than an answer.
+
 ## [1.5.2] — 2026-09-22
 
 ### Fixed

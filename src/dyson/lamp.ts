@@ -224,11 +224,47 @@ const ATTRIBUTE_REPLY_MS = 2_000;
  *
  * The refusal is a set-up gate, not a fault: a lamp that has never been through
  * the MyDyson app's location set-up rejects these while acknowledging them, and
- * one pass through the app lifts it for good.
+ * one pass through the app lifts it — until the lamp next loses power, which
+ * puts the gate back. See {@link FACTORY_LOCATION_REMEDY} for that case, which
+ * is the one a user is far more likely to hit.
  */
 const LOCATION_REMEDY =
   'Lamps refuse this until they have been through the location set-up in the MyDyson app; ' +
   'one pass through it lifts that for good. See the README.';
+
+/**
+ * Dyson's own coordinates in Malmesbury, which every lamp holds from the
+ * factory and returns to whenever it loses power.
+ *
+ * Measured 2026-09-22: a lamp that had accepted this plugin's coordinates two
+ * hours earlier read these back after being unplugged, and refused the write
+ * again. So the set-up gate is not lifted for good after all — it is lifted
+ * until the next power cut, and a lamp reading these is one whose daylight
+ * tracking has stopped working rather than one that was never set up.
+ */
+const FACTORY_LOCATION = { latitude: 51.5864, longitude: -2.1028 };
+
+/**
+ * Recognising the factory pair, not comparing coordinates.
+ *
+ * Coarser than {@link COORDINATE_EPSILON} on purpose: this only has to tell
+ * Malmesbury apart from wherever the user lives, and being a few metres out
+ * must not turn the message below back into the generic one.
+ */
+const FACTORY_LOCATION_EPSILON = 1e-3;
+
+/**
+ * What to tell a user whose lamp has reverted to the factory coordinates.
+ *
+ * Worth separating from {@link LOCATION_REMEDY}: the generic advice says the
+ * lamp has never been set up, which reads as nonsense to someone whose lamp
+ * worked yesterday. This names the cause and the one thing that fixes it.
+ */
+const FACTORY_LOCATION_REMEDY =
+  'The lamp is back at its factory coordinates in Malmesbury, which is what happens when it ' +
+  'loses power — daylight tracking will not run until it has a real location again. Open the ' +
+  'MyDyson app once and let it set the location; this plugin can write it again afterwards. ' +
+  'See the README.';
 
 /**
  * Attempts at a write the lamp drops rather than refuses.
@@ -1122,13 +1158,15 @@ export class DysonMorphLamp extends EventEmitter {
    * controls, and rewriting them every connection would be churn on a channel
    * shared with the mode switches.
    *
-   * **A lamp that has never been set up in the MyDyson app refuses these**,
-   * acknowledging the write with a success status and keeping the factory
-   * coordinates — measured on a CF06 on 2026-09-22, roughly fifteen attempts
-   * across a day, none of them stored. One pass through the app's set-up lifts
-   * it for good: the same lamp took this plugin's write minutes later. So the
-   * write is attempted, read back, and a refusal is reported as one rather than
-   * guessed at — see {@link writeAndVerify}.
+   * **A lamp behind the set-up gate refuses these**, acknowledging the write
+   * with a success status and keeping the factory coordinates — measured on a
+   * CF06 on 2026-09-22, roughly fifteen attempts across a day, none of them
+   * stored. One pass through the app's set-up lifts it, and a power cut puts it
+   * back: the same lamp took this plugin's write minutes after the app had run,
+   * and refused it again two hours later after being unplugged. So the write is
+   * attempted, read back, and a refusal is reported as one rather than guessed
+   * at — see {@link writeAndVerify}, and {@link FACTORY_LOCATION} for telling
+   * the two cases apart.
    */
   private async syncLocation(): Promise<void> {
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -1142,12 +1180,25 @@ export class DysonMorphLamp extends EventEmitter {
       this.log.debug(`Lamp ${this.mac} places itself at ${describeLocation(current as LampLocation)}`);
     }
 
+    const atFactory =
+      current.latitude !== undefined &&
+      current.longitude !== undefined &&
+      Math.abs(current.latitude - FACTORY_LOCATION.latitude) < FACTORY_LOCATION_EPSILON &&
+      Math.abs(current.longitude - FACTORY_LOCATION.longitude) < FACTORY_LOCATION_EPSILON;
+
     const wanted = this.location;
     if (!wanted) {
+      // Nothing to write, but a lamp sitting on the factory pair is a lamp
+      // whose daylight tracking has stopped, and the user cannot see that from
+      // the Home app: the switch stays on and the colour simply never moves.
+      if (atFactory) {
+        this.log.warn(`${this.mac} has no location of its own. ${FACTORY_LOCATION_REMEDY}`);
+      }
       return;
     }
     const same = (degrees: number | undefined, wantedDegrees: number): boolean =>
       degrees !== undefined && Math.abs(degrees - wantedDegrees) < COORDINATE_EPSILON;
+    const remedy = atFactory ? FACTORY_LOCATION_REMEDY : LOCATION_REMEDY;
     const near = (value: Buffer | undefined, wantedDegrees: number): boolean =>
       same(value?.length === 8 ? value.readDoubleLE(0) : undefined, wantedDegrees);
 
@@ -1163,7 +1214,7 @@ export class DysonMorphLamp extends EventEmitter {
           buildCoordinateWrite('latitude', wanted.latitude),
           (value) => near(value, wanted.latitude),
           'latitude',
-          { remedy: LOCATION_REMEDY },
+          { remedy },
         );
         await sleep(COORDINATE_WRITE_GAP_MS);
         const longitude = await this.writeAndVerify(
@@ -1171,7 +1222,7 @@ export class DysonMorphLamp extends EventEmitter {
           buildCoordinateWrite('longitude', wanted.longitude),
           (value) => near(value, wanted.longitude),
           'longitude',
-          { remedy: LOCATION_REMEDY },
+          { remedy },
         );
         return latitude && longitude;
       })) === true;
