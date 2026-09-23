@@ -71,6 +71,10 @@
     {
       "type": "paypal",
       "url": "https://paypal.me/rummeyer"
+    },
+    {
+      "type": "buymeacoffee",
+      "url": "https://buymeacoffee.com/rummeyer"
     }
   ],
   "type": "module"
