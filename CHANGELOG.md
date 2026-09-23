@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **A day of your own now has a switch, "Use this day" (`customDay`).**
+  `dayStart` and `dayEnd` are put in the lamp only while it is on, and ignored
+  otherwise — so the times can stay filled in without being applied, and are
+  not checked while they are not used. **Off by default: a config that sets the
+  times without the switch stops applying them**, and the log says so on
+  start-up. Turning the switch off does not undo a day already written; the
+  MyDyson app still has to.
+- The daylight switch's description says that setting brightness by hand ends
+  the tracking too, not only colour temperature.
+- Settings page texts corrected: the location message was missing an "if", and
+  the header said every lamp becomes two accessories even with all its
+  switches turned off.
+
 ## [1.6.0] — 2026-09-22
 
 ### Fixed

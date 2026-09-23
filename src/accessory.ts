@@ -71,10 +71,10 @@ export class MorphAccessory {
         config.latitude !== undefined && config.longitude !== undefined
           ? { latitude: config.latitude, longitude: config.longitude }
           : undefined,
-      // Both or neither again, and validation has already refused half a day,
-      // so one of them being a time means the other is too.
+      // Only behind the switch, and validation has already refused half a day
+      // or an unreadable one while it is on.
       day:
-        config.dayStart !== undefined && config.dayEnd !== undefined
+        config.customDay === true && config.dayStart !== undefined && config.dayEnd !== undefined
           ? { start: parseTimeOfDay(config.dayStart)!, end: parseTimeOfDay(config.dayEnd)! }
           : undefined,
       // The switch only means anything next to a year, so the pair travels
@@ -86,6 +86,15 @@ export class MorphAccessory {
           : { yearOfBirth: config.yearOfBirth, enabled: config.ageAdjust !== false },
       log: platform.log,
     });
+
+    // Before 1.7.0 the times alone were enough, so a config from then carries
+    // them without the switch and would otherwise stop applying them in silence.
+    if (config.customDay !== true && (config.dayStart !== undefined || config.dayEnd !== undefined)) {
+      platform.log.info(
+        `${config.name} has dayStart/dayEnd set but "Use this day" off, so they are ignored and the lamp ` +
+          'keeps its own day. Turn it on to apply them.',
+      );
+    }
 
     this.describe(accessories.light, config.serial);
     if (accessories.switches) {

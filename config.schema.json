@@ -2,7 +2,7 @@
   "pluginAlias": "DysonSolarcycleMorph",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph.\n\n**The lamp must be registered in the MyDyson app.** Its key is issued by Dyson against the account the lamp belongs to and cannot be read from the device itself.\n\nEach lamp becomes two accessories in the Home app: the light itself, and a second one holding the switches below.",
+  "headerDisplay": "Controls the Bluetooth-only Dyson Solarcycle / Lightcycle Morph.\n\n**The lamp must be registered in the MyDyson app.** Its key is issued by Dyson against the account the lamp belongs to and cannot be read from the device itself.\n\nEach lamp becomes two accessories in the Home app: the light itself, and a second one holding the switches below. With every switch turned off, that second one is left out.",
   "schema": {
     "type": "object",
     "required": [
@@ -87,7 +87,7 @@
               "type": "string",
               "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
               "placeholder": "08:00",
-              "description": "Optional. Replaces the real sunrise for this lamp — daylight tracking then begins here instead. Supply both this and the end, or neither; leave both empty and the lamp follows the actual sun."
+              "description": "Optional. Replaces the real sunrise for this lamp — daylight tracking then begins here instead. Only used while \"Use this day\" below is on."
             },
             "dayEnd": {
               "title": "Day ends at",
@@ -95,6 +95,15 @@
               "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
               "placeholder": "18:00",
               "description": "Optional. Replaces the real sunset. The lamp returns to its baseline settings once the day is over."
+            },
+            "customDay": {
+              "title": "Use this day",
+              "type": "boolean",
+              "default": false,
+              "condition": {
+                "functionBody": "return model.lights && model.lights[arrayIndices[0]] && (model.lights[arrayIndices[0]].dayStart || model.lights[arrayIndices[0]].dayEnd);"
+              },
+              "description": "Puts the two times above in the lamp. Off, they are ignored and the lamp's day is not touched. Turning it off does not undo a day already written: the lamp keeps it until the MyDyson app sets it back."
             },
             "yearOfBirth": {
               "title": "Year of birth",
@@ -116,7 +125,7 @@
               "title": "Expose daylight tracking",
               "type": "boolean",
               "default": true,
-              "description": "Adds a switch for the lamp's daylight tracking, which adjusts colour temperature to the time of day. It reports the true state, following the button on the lamp base and the MyDyson app, and setting a colour temperature by hand ends the tracking as the lamp itself decides."
+              "description": "Adds a switch for the lamp's daylight tracking, which adjusts colour temperature to the time of day. It reports the true state, following the button on the lamp base and the MyDyson app. Setting brightness or colour temperature by hand ends the tracking; that is the lamp's own rule."
             }
           }
         }
@@ -170,6 +179,7 @@
                 "lights[].longitude",
                 "lights[].dayStart",
                 "lights[].dayEnd",
+                "lights[].customDay",
                 "lights[].yearOfBirth",
                 "lights[].ageAdjust",
                 "lights[].daylightSwitch",

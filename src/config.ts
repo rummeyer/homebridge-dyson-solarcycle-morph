@@ -49,11 +49,17 @@ export interface LightConfig {
    * Daylight tracking normally follows the real sunrise and sunset for the
    * lamp's location. These override that with a day of your own choosing — the
    * lamp holds them as minutes past midnight and falls back to its baseline
-   * settings once the day is over, natural or custom. Left out, whatever the
-   * lamp already holds is untouched.
+   * settings once the day is over, natural or custom. Only used while
+   * {@link customDay} is on; otherwise the lamp's day is untouched.
    */
   dayStart?: string;
   dayEnd?: string;
+  /**
+   * Whether {@link dayStart} and {@link dayEnd} are put in the lamp. Off by
+   * default, so the times can stay filled in without being applied, and
+   * turning it off does not mean emptying them.
+   */
+  customDay?: boolean;
   /**
    * Birth year of the main intended user, for the lamp's age adjustment.
    *
@@ -169,10 +175,43 @@ export function validateLightConfig(light: Partial<LightConfig>, index: number):
   if ((light.latitude === undefined) !== (light.longitude === undefined)) {
     problems.push(`${where} sets only one of latitude/longitude — supply both, or neither`);
   }
-  // The lamp holds a start and an end, and a day with only one of them stated
-  // is not a day. Rejected rather than half-applied, as with the location.
-  if ((light.dayStart === undefined) !== (light.dayEnd === undefined)) {
-    problems.push(`${where} sets only one of dayStart/dayEnd — supply both, or neither`);
+  // Times that are not in use are not checked either: they are ignored, and a
+  // half-typed day left behind the switch must not stop the plugin starting.
+  if (light.customDay === true) {
+    problems.push(...validateDay(light, where));
+  }
+  if (light.yearOfBirth !== undefined) {
+    const thisYear = new Date().getFullYear();
+    const year = light.yearOfBirth;
+    if (!Number.isInteger(year) || year < EARLIEST_YEAR_OF_BIRTH || year > thisYear) {
+      problems.push(
+        `${where}.yearOfBirth must be a whole year between ${EARLIEST_YEAR_OF_BIRTH} and ${thisYear} ` +
+          `(got ${JSON.stringify(light.yearOfBirth)})`,
+      );
+    }
+  } else if (light.ageAdjust !== undefined) {
+    problems.push(`${where} sets ageAdjust with no yearOfBirth — there is nothing to adjust for`);
+  }
+  for (const [field, limit] of [['latitude', 90], ['longitude', 180]] as const) {
+    const value = light[field];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > limit)) {
+      problems.push(`${where}.${field} must be a number between -${limit} and ${limit} (got ${JSON.stringify(value)})`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * Check a day that is switched on.
+ *
+ * The lamp holds a start and an end, and a day with only one of them stated is
+ * not a day. Rejected rather than half-applied, as with the location — and
+ * with the switch on, a missing time is a mistake rather than a choice.
+ */
+function validateDay(light: Partial<LightConfig>, where: string): string[] {
+  const problems: string[] = [];
+  if (light.dayStart === undefined || light.dayEnd === undefined) {
+    problems.push(`${where} turns customDay on without both dayStart and dayEnd — supply both, or turn it off`);
   }
   const day: Partial<Record<'dayStart' | 'dayEnd', number>> = {};
   for (const field of ['dayStart', 'dayEnd'] as const) {
@@ -192,24 +231,6 @@ export function validateLightConfig(light: Partial<LightConfig>, index: number):
       `${where}.dayEnd must come after dayStart, and the lamp has no way to state a day that runs past midnight ` +
         `(got ${JSON.stringify(light.dayStart)} to ${JSON.stringify(light.dayEnd)})`,
     );
-  }
-  if (light.yearOfBirth !== undefined) {
-    const thisYear = new Date().getFullYear();
-    const year = light.yearOfBirth;
-    if (!Number.isInteger(year) || year < EARLIEST_YEAR_OF_BIRTH || year > thisYear) {
-      problems.push(
-        `${where}.yearOfBirth must be a whole year between ${EARLIEST_YEAR_OF_BIRTH} and ${thisYear} ` +
-          `(got ${JSON.stringify(light.yearOfBirth)})`,
-      );
-    }
-  } else if (light.ageAdjust !== undefined) {
-    problems.push(`${where} sets ageAdjust with no yearOfBirth — there is nothing to adjust for`);
-  }
-  for (const [field, limit] of [['latitude', 90], ['longitude', 180]] as const) {
-    const value = light[field];
-    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > limit)) {
-      problems.push(`${where}.${field} must be a number between -${limit} and ${limit} (got ${JSON.stringify(value)})`);
-    }
   }
   return problems;
 }

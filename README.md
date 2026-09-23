@@ -219,8 +219,9 @@ the lamp. The example above shows every key at once, which no real config needs.
 | `lights[].longitude` | number | unset | Decimal degrees, -180 to 180 |
 | `lights[].yearOfBirth` | integer | unset | 1900 to this year |
 | `lights[].ageAdjust` | boolean | `true` | Only read when `yearOfBirth` is set |
-| `lights[].dayStart` | string | | `HH:MM`. Both or neither, end after start |
+| `lights[].dayStart` | string | | `HH:MM`, end after start. Only read when `customDay` is on |
 | `lights[].dayEnd` | string | | |
+| `lights[].customDay` | boolean | `false` | Puts `dayStart`/`dayEnd` in the lamp; off, they are ignored |
 | `lights[].daylightSwitch` | boolean | `true` | |
 | `lights[].autoBrightnessSwitch` | boolean | `true` | |
 | `lights[].movementSwitch` | boolean | `true` | |
@@ -231,13 +232,15 @@ the lamp. The example above shows every key at once, which no real config needs.
 | `adapter` | string | system default | e.g. `hci1` |
 
 **A light with something wrong with it is skipped, and the rest still load** —
-the message names the entry and the key. Two combinations are refused rather
-than half-applied, because half of either would quietly do the wrong thing:
+the message names the entry and the key. Three combinations are refused rather
+than half-applied, because half of any of them would quietly do the wrong thing:
 
 - `latitude` without `longitude`, or the other way round. A lamp told only its
   latitude would put itself on the Greenwich meridian and track the wrong sunset
   all year.
 - `ageAdjust` without `yearOfBirth`. There would be nothing to adjust for.
+- `customDay` on without both `dayStart` and `dayEnd`. With it off, the times are
+  not checked at all, since they are not used.
 
 **No key for the lamp appears here.** Pairing puts it in the plugin's storage
 directory instead — see [What is stored, and where](#what-is-stored-and-where).
@@ -299,26 +302,32 @@ machine contacts already sees. Check what it filled in before saving.
 ### A day of your own
 
 Daylight tracking follows the real sunrise and sunset by default. Two optional
-fields replace that with a day you choose:
+fields replace that with a day you choose, and a switch decides whether they
+are used:
 
 ```json
 "dayStart": "07:30",
-"dayEnd": "22:00"
+"dayEnd": "22:00",
+"customDay": true
 ```
+
+With `customDay` off, which is the default, the times are ignored and can stay
+filled in for later. On the settings page the switch is **Use this day**, and it
+appears once either time is filled in.
 
 The lamp keeps its warm-to-cool-to-warm shape and fits it between those two
 times instead of the sun's, and falls back to a softer, warmer baseline once the
 day is over. It is the same pair the MyDyson app offers as *Sunrise* and
-*Sunset*. Supply both or neither, and the end has to come after the start — the
-lamp stores two plain minute counts and has no way to express a day that runs
-past midnight. Leave them out and the sun decides.
+*Sunset*. With the switch on, both are needed and the end has to come after the
+start — the lamp stores two plain minute counts and has no way to express a day
+that runs past midnight. Leave the switch off and the sun decides.
 
 The effect is immediate and visible: setting the end to a time already past
 drops the lamp to its baseline within a second, and putting the real one back
 brings it straight up again.
 
-**There is no way back to automatic from here.** Clearing the fields stops the
-plugin correcting the lamp, but whatever day was last written stays in it. The
+**There is no way back to automatic from here.** Turning the switch off stops
+the plugin correcting the lamp, but whatever day was last written stays in it. The
 lamp may recompute the times from its location on its own — that is untested —
 and the MyDyson app certainly can. Until that is settled, treat setting a day as
 something the app has to undo.
