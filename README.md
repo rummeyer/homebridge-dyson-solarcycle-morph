@@ -15,6 +15,12 @@
   <img src="https://img.shields.io/badge/node-22%20%7C%2024%20%7C%2026-green" alt="Node 22, 24 or 26">
 </p>
 
+<p align="center">
+  <a href="https://github.com/sponsors/rummeyer"><img src="https://img.shields.io/badge/donate-GitHub%20Sponsors-yellow" alt="Donate with GitHub Sponsors"></a>
+  <a href="https://paypal.me/rummeyer"><img src="https://img.shields.io/badge/donate-PayPal-yellow" alt="Donate with PayPal"></a>
+  <a href="https://buymeacoffee.com/rummeyer"><img src="https://img.shields.io/badge/donate-Buy%20Me%20a%20Coffee-yellow" alt="Buy Me a Coffee"></a>
+</p>
+
 ---
 
 ## What you get
