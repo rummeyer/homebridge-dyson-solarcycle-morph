@@ -130,8 +130,8 @@ towards a new level rather than jumping, and with Auto Brightness on it keeps
 adjusting to suit the room. Asking for 100% and seeing 88% is the lamp doing its
 job — turn Auto Brightness off if you would rather it stayed put.
 
-**Setting a colour temperature ends daylight tracking**, and the Daylight switch
-turns itself off when you do. That is the lamp's own behaviour, not something
+**Setting a brightness or a colour temperature ends daylight tracking**, and
+the Daylight switch turns itself off when you do. That is the lamp's own behaviour, not something
 the plugin decides. Flip the switch back on to resume.
 
 **The three mode switches work while the lamp is off**, though the lamp itself
