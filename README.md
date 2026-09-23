@@ -10,15 +10,14 @@
 
 <p align="center">
   <a href="https://github.com/rummeyer/homebridge-dyson-solarcycle-morph/releases"><img src="https://img.shields.io/github/v/release/rummeyer/homebridge-dyson-solarcycle-morph?label=release" alt="Release"></a>
+  <a href="https://www.npmjs.com/package/homebridge-dyson-solarcycle-morph"><img src="https://img.shields.io/npm/dt/homebridge-dyson-solarcycle-morph" alt="Downloads"></a>
   <a href="https://github.com/rummeyer/homebridge-dyson-solarcycle-morph/blob/main/LICENSE"><img src="https://img.shields.io/badge/licence-MIT-blue" alt="Licence"></a>
   <img src="https://img.shields.io/badge/homebridge-1.8%20%7C%202.x-purple" alt="Homebridge 1.8 or 2.x">
   <img src="https://img.shields.io/badge/node-22%20%7C%2024%20%7C%2026-green" alt="Node 22, 24 or 26">
 </p>
 
 <p align="center">
-  <a href="https://github.com/sponsors/rummeyer"><img src="https://img.shields.io/badge/donate-GitHub%20Sponsors-yellow" alt="Donate with GitHub Sponsors"></a>
   <a href="https://paypal.me/rummeyer"><img src="https://img.shields.io/badge/donate-PayPal-yellow" alt="Donate with PayPal"></a>
-  <a href="https://buymeacoffee.com/rummeyer"><img src="https://img.shields.io/badge/donate-Buy%20Me%20a%20Coffee-yellow" alt="Buy Me a Coffee"></a>
 </p>
 
 ---
