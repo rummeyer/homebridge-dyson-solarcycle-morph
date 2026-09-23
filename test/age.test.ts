@@ -140,17 +140,17 @@ test('the age-adjust switch is a one-byte attribute', () => {
 });
 
 test('a year of birth outside the app’s own picker is rejected', () => {
-  const light = { name: 'Lamp', mac: 'F0:B1:A7:75:B1:D1', serial: 'E5T-EU-NFA1279A' };
+  const light = { name: 'Lamp', mac: 'AA:BB:CC:DD:EE:FF', serial: 'E5T-EU-6DYYJX5E' };
   const thisYear = new Date().getFullYear();
-  assert.deepEqual(validateLightConfig({ ...light, yearOfBirth: 1974 }, 0), []);
+  assert.deepEqual(validateLightConfig({ ...light, yearOfBirth: 1985 }, 0), []);
   assert.deepEqual(validateLightConfig({ ...light, yearOfBirth: thisYear }, 0), []);
   assert.match(validateLightConfig({ ...light, yearOfBirth: 1899 }, 0)[0]!, /whole year between 1900/);
   assert.match(validateLightConfig({ ...light, yearOfBirth: thisYear + 1 }, 0)[0]!, /whole year between 1900/);
-  assert.match(validateLightConfig({ ...light, yearOfBirth: 1974.5 }, 0)[0]!, /whole year/);
+  assert.match(validateLightConfig({ ...light, yearOfBirth: 1985.5 }, 0)[0]!, /whole year/);
 });
 
 test('the switch on its own is rejected, because it would adjust for nobody', () => {
-  const light = { name: 'Lamp', mac: 'F0:B1:A7:75:B1:D1', serial: 'E5T-EU-NFA1279A' };
+  const light = { name: 'Lamp', mac: 'AA:BB:CC:DD:EE:FF', serial: 'E5T-EU-6DYYJX5E' };
   assert.match(validateLightConfig({ ...light, ageAdjust: true }, 0)[0]!, /no yearOfBirth/);
-  assert.deepEqual(validateLightConfig({ ...light, yearOfBirth: 1974, ageAdjust: false }, 0), []);
+  assert.deepEqual(validateLightConfig({ ...light, yearOfBirth: 1985, ageAdjust: false }, 0), []);
 });

@@ -201,8 +201,8 @@ held, which is a better starting point than the shapes alone.
 | --- | --- | --- |
 | `0x2013` | `0` | daylight tracking |
 | `0x2026` | `0` | not auto brightness, despite the app's auto-brightness screen writing it; see below |
-| `0x2003` | `48.6719` | **latitude**, double, little-endian |
-| `0x2004` | `9.2807` | **longitude**, double, little-endian |
+| `0x2003` | `48.7784` | **latitude**, double, little-endian |
+| `0x2004` | `9.18` | **longitude**, double, little-endian |
 | `0x2005` | `2.0` | **UTC offset in hours**, `float`, little-endian |
 | `0x201d` | `23 00 78 3c 2a 00 b4 77` | **daylight-saving rules**, 8 bytes |
 | `0x201a` | 64 bytes | **year of birth**, encrypted |
@@ -238,8 +238,8 @@ written little-endian: `pd0/b.java` and `pd0/c.java` build one with
 `bm0/c.java`'s `j()`.
 
 ```
-0x2003  58 17 b7 d1 00 56 48 40   48.671899999999994
-0x2004  71 f9 0f e9 b7 8f 22 40    9.280699999999998
+0x2003  6a 9a 77 9c a2 63 48 40   48.77839999999999
+0x2004  5b 8f c2 f5 28 5c 22 40    9.179999999999998
 ```
 
 Neither is exactly the tidy decimal it looks like — each sits one unit in the
@@ -266,7 +266,7 @@ they are the only way to see from outside whether it has taken a location at
 all — a lamp with none has no day, and refuses daylight tracking with nothing
 but an LED on its base while still acknowledging the write.
 
-Checked against a NOAA calculation for 48.6719, 9.2807 on two dates, and they
+Checked against a NOAA calculation for the lamp's location on two dates, and they
 agree to within a few minutes:
 
 | date | lamp | calculated | offset then |
@@ -318,7 +318,7 @@ immediately after the write returns the factory value every time.
 a unix time as a little-endian `uint32` and the lamp answers `0x53`; send it
 first and the coordinates land. Verified on a CF06 deliberately unplugged: it
 read back `000000200fcb4940` / `000000c088d200c0`, took `80 0eabb26a`, answered
-`53 0000`, then accepted `0x2003` **and read it back as `5917b7d100564840`**,
+`53 0000`, then accepted `0x2003` **and read it back as `6b9a779ca2634840`**,
 with `0x2004` the same. Daylight ran immediately, 07:10-19:22.
 
 `0x2005` and `0x201d` describe a *time zone*; neither says what time it is.
@@ -327,6 +327,18 @@ is no use to it — which is why it discards coordinates while still taking a
 UTC offset seconds later, an asymmetry measured directly on 2026-09-22 at
 15:53. **A power cut takes the clock**, which is why unplugging the lamp is
 what triggers it.
+
+**Whether a power cut also takes the location is now in doubt.** On 2026-09-23
+the same lamp came back from a night off the mains, was sent `0x80`, and only
+then read: `0x2003`/`0x2004` held Stuttgart (`6a9a779ca2634840` /
+`5b8fc2f5285c2240`) and `0x2005` held 2, so nothing needed writing. On
+2026-09-22 the reads came *before* the clock and returned Malmesbury and an
+offset of 1. Two explanations fit and neither is tested: the lamp keeps its
+location through a power cut but reports and uses the factory one until it
+knows the time, or a location written while the clock is set is kept where one
+written without it was not. The plugin cannot tell them apart, since it always
+sends the clock first. Reading the coordinates *before* `0x80` on a lamp fresh
+off the mains would settle it.
 
 **`0x80` is not in `b50/c.java`'s routing table.** Like `0x90` and `0x93` it is
 built directly — `p60/y0.java` and `l50/n.java`, with `p60/l.java` parsing the
@@ -513,7 +525,7 @@ account set it — and `2` "age not set", both of which come with a year of zero
 Writing it also sets `0x2025` to the current unix time as a little-endian
 `uint32` (`he0/u.java`'s `x()`), so the lamp knows when the answer was given.
 
-Verified against a CF06 on 2026-09-21: the blob decrypted to year `1974` with
+Verified against a CF06 on 2026-09-21: the blob decrypted to the year of birth set in the app, with
 status `0` and a matching MAC, which is what the lamp had been told through the
 app in January.
 
@@ -579,8 +591,9 @@ changes.
 **Without subscribing the lamp reports almost nothing** — two `0x97`s against
 952 answered reads across this client's logs, where an iOS capture shows the
 app subscribing to five attributes on every connection and getting a report for
-each within a second. The client now subscribes to daylight and the three
-presets, which is what the app does.
+each within a second. The client subscribes to four of them, daylight and the
+three presets; the fifth, `0x2009`, is a one-byte flag whose meaning is not
+known, and there is nothing to do with a report of it.
 
 ### What the app does on every connect, in order
 
@@ -600,11 +613,10 @@ Two things follow from this that are worth having in mind before theorising
 about why a write of ours is refused and the app's is not:
 
 - **`0x50` and `0x51` go to `2DD10021`, the same characteristic as `0x90` and
-  `0x93`.** This client sends neither, so the beacon exchange is the one thing
-  the app does on that channel that we do not — and it happens *before* the
-  coordinates. That makes it the leading suspect for the set-up gate. It is a
-  suspect and nothing more: it has not been tested, and two other explanations
-  for the gate were confirmed and withdrawn on the same day.
+  `0x93`.** This client sends neither. It was once the leading suspect for the
+  set-up gate; the gate turned out to be the missing clock (`0x80`), and the
+  beacon exchange plays no part in it. The UUIDs are the lamp's rotating
+  advertisement identity, not a credential.
 - **The app never reads the coordinates back.** `md0/k.java`'s chain ends at
   `il0/d.java` case 14, which logs "messages sent successfully" and stops. So
   the app cannot tell a stored write from a refused one either, and "it works
@@ -692,6 +704,36 @@ Leaving daylight mode makes the lamp restore the manual brightness and colour
 temperature it held before, which are not the tracked values on display. With
 tracking on, the drift is visible: colour temperature moved 5280 K to 5296 K over
 two minutes, brightness dithering within about 3 lm.
+
+**Sunrise, as the lamp does it.** Watched on 2026-09-23 through the client's
+state log, daylight and auto brightness on, the lamp's day starting at 07:11
+(`0x2014` = 431):
+
+| time | what the lamp reported |
+| --- | --- |
+| before 07:11 | 3000 K at 11%, the night baseline |
+| 07:12:42 | 2700 K, then down 1% every 2-3 s |
+| 07:13:10 | 0%, still on, 2700 K |
+| 07:23:40 | first step up: 2764 K, then 1% |
+| from then | every minute about +69 K, and a second later +1-2% |
+| 07:45:34 | 4093 K at 26%, climbing |
+
+So the day does not begin with the lamp getting brighter. It drops to its
+warmest and fades to nothing in about half a minute, holds there for ten
+minutes, and only then climbs, warmer-to-cooler and dimmer-to-brighter, like
+the light outside. Nothing was written to the lamp during any of it. Whether
+auto brightness takes part in the fade and the climb is not known. It was on
+throughout and was not tried off.
+
+The one-minute steps arrive about 0.27 s earlier each time: 07:23:40 to
+07:45:34 is 22 steps in 6 s under 22 minutes. Either the lamp's clock runs fast
+by about 0.45%, some six minutes a day, or its tick is just not quite a minute. The client resets the
+clock on every connection, so neither matters much.
+
+**The lamp recomputes its day as the dates change.** `0x2014`/`0x2015` read
+430/1162 on 2026-09-22 and 431/1160 the next morning, both for Stuttgart, which
+is the day getting shorter. Nothing was written in between. Whether it does the
+same over a day written by hand is still untested.
 
 ## Preset modes
 

@@ -186,11 +186,11 @@ editing `config.json` by hand and for reading what the UI produced:
   "lights": [
     {
       "name": "Desk",
-      "mac": "F0:B1:A7:75:B1:D1",
-      "serial": "E5T-EU-NFA1279A",
-      "latitude": 48.6719,
-      "longitude": 9.2807,
-      "yearOfBirth": 1974,
+      "mac": "AA:BB:CC:DD:EE:FF",
+      "serial": "E5T-EU-6DYYJX5E",
+      "latitude": 48.7784,
+      "longitude": 9.18,
+      "yearOfBirth": 1985,
       "ageAdjust": true,
       "daylightSwitch": true,
       "autoBrightnessSwitch": true,
@@ -277,13 +277,13 @@ it still reads them on connecting and puts them in the debug log, which is the
 way to find out what the app put there:
 
 ```
-Lamp F0:B1:A7:75:B1:D1 places itself at 48.67190, 9.28070
+Lamp AA:BB:CC:DD:EE:FF places itself at 48.77840, 9.18000
 ```
 
 Fill them in and it writes yours whenever the lamp disagrees, and says so:
 
 ```
-Location of F0:B1:A7:75:B1:D1 set to 48.67190, 9.28070 (was 50.11090, 8.68210)
+Location of AA:BB:CC:DD:EE:FF set to 48.77840, 9.18000 (was 50.11090, 8.68210)
 ```
 
 **Use my current location** on the settings page fills both fields in for every
@@ -331,7 +331,7 @@ The MyDyson app writes both on every connection, and so does this plugin, only
 when the lamp disagrees:
 
 ```
-UTC offset of F0:B1:A7:75:B1:D1 set to 2 (was 1)
+UTC offset of AA:BB:CC:DD:EE:FF set to 2 (was 1)
 ```
 
 **There is nothing to configure.** Both come from the time zone of the machine
@@ -351,13 +351,13 @@ from. What answers it is the day the lamp has worked out, which appears on every
 connection:
 
 ```
-F0:B1:A7:75:B1:D1 puts today's daylight between 07:04 and 19:30
+AA:BB:CC:DD:EE:FF puts today's daylight between 07:04 and 19:30
 ```
 
 A lamp with no location has no day, and says so:
 
 ```
-F0:B1:A7:75:B1:D1 has worked out no sunrise or sunset, which means it holds no
+AA:BB:CC:DD:EE:FF has worked out no sunrise or sunset, which means it holds no
 location. Daylight tracking cannot run until one is set
 ```
 
@@ -383,7 +383,7 @@ owner"*. If a different account got there first the plugin says so and changes
 nothing:
 
 ```
-The age adjustment on F0:B1:A7:75:B1:D1 was set by a different Dyson account
+The age adjustment on AA:BB:CC:DD:EE:FF was set by a different Dyson account
 and only that account can change it.
 ```
 

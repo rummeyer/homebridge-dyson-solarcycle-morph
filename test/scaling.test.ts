@@ -71,7 +71,7 @@ test('a config that overrides both credentials validates', () => {
 });
 
 test('a malformed MAC is rejected', () => {
-  const problems = validateLightConfig({ ...valid, mac: 'F0-B1-A7-75-B1-D1' }, 0);
+  const problems = validateLightConfig({ ...valid, mac: 'AA-BB-CC-DD-EE-FF' }, 0);
   assert.equal(problems.length, 1);
   assert.match(problems[0]!, /lights\[0\]\.mac/);
 });

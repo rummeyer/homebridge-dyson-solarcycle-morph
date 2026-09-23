@@ -180,7 +180,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The log says what the lamp makes of its location.** Once a connection is up:
 
   ```
-  F0:B1:A7:75:B1:D1 puts today's daylight between 07:09 and 19:22
+  AA:BB:CC:DD:EE:FF puts today's daylight between 07:09 and 19:22
   ```
 
   This is the lamp's own sunrise and sunset, and the only honest answer to

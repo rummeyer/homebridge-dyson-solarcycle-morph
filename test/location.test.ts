@@ -18,9 +18,9 @@ import { validateLightConfig } from '../src/config.ts';
  * a parsed string. That is the reason the plugin compares coordinates with a
  * tolerance instead of for equality.
  */
-const LAMP_LATITUDE = Buffer.from('5817b7d100564840', 'hex');
-const LAMP_LONGITUDE = Buffer.from('71f90fe9b78f2240', 'hex');
-const LAMP_DEGREES = { latitude: 48.671899999999994, longitude: 9.280699999999998 };
+const LAMP_LATITUDE = Buffer.from('6a9a779ca2634840', 'hex');
+const LAMP_LONGITUDE = Buffer.from('5b8fc2f5285c2240', 'hex');
+const LAMP_DEGREES = { latitude: 48.77839999999999, longitude: 9.179999999999998 };
 
 /** Wrap a value the way the lamp does when answering a 0x90. */
 function reply(attribute: number, value: Buffer): Buffer {
@@ -55,8 +55,8 @@ test('the lamp’s own bytes decode to where it stands', () => {
 test('a typed decimal is the same place as the lamp\u2019s own reading', () => {
   // What the settings page stores, against what the app put in the lamp. The
   // plugin must not read the difference as a move and rewrite it every time.
-  assert.ok(Math.abs(48.6719 - LAMP_DEGREES.latitude) < 1e-6);
-  assert.ok(Math.abs(9.2807 - LAMP_DEGREES.longitude) < 1e-6);
+  assert.ok(Math.abs(48.7784 - LAMP_DEGREES.latitude) < 1e-6);
+  assert.ok(Math.abs(9.18 - LAMP_DEGREES.longitude) < 1e-6);
 });
 
 test('a coordinate read asks for the right attribute', () => {
@@ -85,24 +85,24 @@ test('a reply about another attribute is not mistaken for this one', () => {
 });
 
 test('half a location is rejected', () => {
-  const light = { name: 'Lamp', mac: 'F0:B1:A7:75:B1:D1', serial: 'E5T-EU-NFA1279A' };
-  assert.deepEqual(validateLightConfig({ ...light, latitude: 48.6719, longitude: 9.2807 }, 0), []);
+  const light = { name: 'Lamp', mac: 'AA:BB:CC:DD:EE:FF', serial: 'E5T-EU-6DYYJX5E' };
+  assert.deepEqual(validateLightConfig({ ...light, latitude: 48.7784, longitude: 9.18 }, 0), []);
   assert.deepEqual(validateLightConfig(light, 0), []);
-  assert.match(validateLightConfig({ ...light, latitude: 48.6719 }, 0)[0]!, /only one of latitude\/longitude/);
+  assert.match(validateLightConfig({ ...light, latitude: 48.7784 }, 0)[0]!, /only one of latitude\/longitude/);
 });
 
 test('coordinates outside the globe are rejected', () => {
-  const light = { name: 'Lamp', mac: 'F0:B1:A7:75:B1:D1', serial: 'E5T-EU-NFA1279A' };
+  const light = { name: 'Lamp', mac: 'AA:BB:CC:DD:EE:FF', serial: 'E5T-EU-6DYYJX5E' };
   assert.match(
-    validateLightConfig({ ...light, latitude: 91, longitude: 9.2807 }, 0)[0]!,
+    validateLightConfig({ ...light, latitude: 91, longitude: 9.18 }, 0)[0]!,
     /latitude must be a number between -90 and 90/,
   );
   assert.match(
-    validateLightConfig({ ...light, latitude: 48.6719, longitude: -181 }, 0)[0]!,
+    validateLightConfig({ ...light, latitude: 48.7784, longitude: -181 }, 0)[0]!,
     /longitude must be a number between -180 and 180/,
   );
   assert.match(
-    validateLightConfig({ ...light, latitude: Number.NaN, longitude: 9.2807 }, 0)[0]!,
+    validateLightConfig({ ...light, latitude: Number.NaN, longitude: 9.18 }, 0)[0]!,
     /latitude must be a number/,
   );
 });
@@ -135,9 +135,9 @@ test('the factory pair is recognisable, and is not where anyone lives', () => {
     COORDINATES.longitude,
   )!.readDoubleLE(0);
 
-  // Malmesbury, which every lamp holds from the factory and falls back to when
-  // it loses power. The plugin tells this pair apart to explain the refusal
-  // properly instead of claiming the lamp was never set up.
+  // Malmesbury, which every lamp holds from the factory and reads after losing
+  // power while it has no clock. The plugin tells this pair apart so it can
+  // name that cause instead of calling the refusal unexpected.
   const factory = { latitude: 51.5864, longitude: -2.1028 };
   const epsilon = 1e-3;
   assert.ok(Math.abs(latitude - factory.latitude) < epsilon, 'the factory latitude is matched');

@@ -237,11 +237,12 @@ const LOCATION_REMEDY =
 
 /**
  * Dyson's own coordinates in Malmesbury, which every lamp holds from the
- * factory and returns to whenever it loses power.
+ * factory.
  *
- * A lamp reading these has lost its location, which until 1.6.0 it could not
- * be given back without the MyDyson app. It now can: the plugin sets the
- * clock first and the write lands. Kept because the pair is still worth
+ * A lamp without a clock reads these after losing power. Whether it has
+ * forgotten its location or only will not use it until it knows the time is
+ * open: sent the clock first, as this plugin does, one came back from a night
+ * off the mains still holding its own. Kept because the pair is still worth
  * recognising — it is the difference between a lamp that has lost its
  * position and one that has moved.
  */
@@ -257,24 +258,24 @@ const FACTORY_LOCATION = { latitude: 51.5864, longitude: -2.1028 };
 const FACTORY_LOCATION_EPSILON = 1e-3;
 
 /**
- * What to tell a user whose lamp has reverted to the factory coordinates.
+ * What to tell a user whose lamp reads the factory coordinates.
  *
- * Worth separating from {@link LOCATION_REMEDY}: the generic advice says the
- * lamp has never been set up, which reads as nonsense to someone whose lamp
- * worked yesterday. This names the cause and the one thing that fixes it.
+ * Worth separating from {@link LOCATION_REMEDY}: this one names the likely
+ * cause, a lamp that has been off the mains, rather than just calling the
+ * refusal unexpected.
  */
 const FACTORY_LOCATION_REMEDY =
-  'The lamp is back at its factory coordinates in Malmesbury, which is what happens when it ' +
-  'loses power. This plugin now sets the lamp\'s clock before writing a location, which is what ' +
+  'The lamp is back at its factory coordinates in Malmesbury, which is what it reads after ' +
+  'losing power. This plugin now sets the lamp\'s clock before writing a location, which is what ' +
   'a lamp in this state was always missing, so the write below should land. If it does not, ' +
   'please report the log. See the README.';
 
 /**
  * Attempts at a write the lamp drops rather than refuses.
  *
- * Distinct from the set-up gate above: this lamp loses writes now and then for
- * no cause anyone has isolated, and one of the two day boundaries went missing
- * that way while the other landed in the same breath.
+ * This lamp loses writes now and then for no cause anyone has isolated, and one
+ * of the two day boundaries went missing that way while the other landed in the
+ * same breath.
  */
 const FICKLE_WRITE_ATTEMPTS = 3;
 
@@ -311,11 +312,13 @@ const COORDINATE_WRITE_GAP_MS = 300;
 const COORDINATE_EPSILON = 1e-6;
 
 /**
- * The attributes worth being told about, the same five the app subscribes to.
+ * The attributes worth being told about: four of the five the app subscribes
+ * to.
  *
  * Daylight tracking and the three preset modes: the settings a person can
  * change at the lamp itself or from the app, where waiting for the next poll
- * shows HomeKit a stale switch.
+ * shows HomeKit a stale switch. The app's fifth, `0x2009`, is a flag nobody
+ * has identified, so a report of it would have nowhere to go.
  */
 const REPORTED_ATTRIBUTES = [ATTR_DAYLIGHT, PRESETS.study, PRESETS.relax, PRESETS.precision];
 
@@ -396,8 +399,9 @@ export interface LampOptions {
   adapter?: string;
   /**
    * Where the lamp stands. Put into the lamp on connecting when it does not
-   * already hold it; left alone entirely when absent, since a lamp set up
-   * through the MyDyson app already knows.
+   * already hold it; left alone when absent, since a lamp set up through the
+   * MyDyson app already knows, though it is still read and a lamp on the
+   * factory coordinates is warned about.
    */
   location?: LampLocation;
   /**
@@ -517,13 +521,14 @@ export class DysonMorphLamp extends EventEmitter {
   constructor(options: LampOptions) {
     super();
     this.mac = options.mac.toUpperCase();
-    this.aesKey = deriveAesKey(Buffer.from(options.ltk.replace(/[^0-9a-fA-F]/g, ''), 'hex'));
+    const ltk = Buffer.from(options.ltk.replace(/[^0-9a-fA-F]/g, ''), 'hex');
+    this.aesKey = deriveAesKey(ltk);
     this.accountId = options.accountId;
     this.adapterName = options.adapter;
     this.location = options.location;
     this.day = options.day;
     this.ageAdjust = options.ageAdjust;
-    this.sensitiveKey = deriveSensitiveKey(Buffer.from(options.ltk.replace(/[^0-9a-fA-F]/g, ''), 'hex'));
+    this.sensitiveKey = deriveSensitiveKey(ltk);
     this.log = options.log ?? noopLog;
   }
 
@@ -1286,7 +1291,7 @@ export class DysonMorphLamp extends EventEmitter {
    * Unsubscribed it reports almost nothing — two `0x97`s against 952 answered
    * reads across this plugin's logs — so a change made at the lamp's own base
    * or in the app went unnoticed until the next poll. The app subscribes to
-   * these same five every session.
+   * these four every session, and to one more; see {@link REPORTED_ATTRIBUTES}.
    *
    * Best-effort: a subscription that does not take costs a slower notice of a
    * change, not a broken accessory, so a failure is logged and the connection
@@ -1317,8 +1322,9 @@ export class DysonMorphLamp extends EventEmitter {
    * these go out while reconnecting.
    *
    * Written only when the lamp disagrees, so a lamp that already holds the
-   * right values is never touched and the log stays quiet. Some lamps refuse
-   * the offset outright and say otherwise; see {@link writeAndVerify}.
+   * right values is never touched and the log stays quiet. Read back like the
+   * location, because on this channel an acknowledgement is not proof; see
+   * {@link writeAndVerify}.
    */
   private async syncClock(): Promise<void> {
     if (!this.chars[CHAR_WRITE_ATTR]) {
@@ -1388,9 +1394,10 @@ export class DysonMorphLamp extends EventEmitter {
    * landed in the same breath, which is this lamp dropping a write rather than
    * refusing a setting.
    *
-   * Written on every connection where the lamp disagrees, which also covers the
-   * open question of whether it recomputes these overnight — if it does, the
-   * next connection puts the chosen day back.
+   * Written on every connection where the lamp disagrees. That matters: a lamp
+   * following the sun recomputes these as the dates change (431/1160 the
+   * morning after 430/1162), and whether it does the same over a written day is
+   * untested. If it does, the next connection puts the chosen day back.
    */
   private async syncDay(): Promise<void> {
     const wanted = this.day;
@@ -1632,22 +1639,22 @@ export class DysonMorphLamp extends EventEmitter {
    * Write an attribute and check the lamp actually took it.
    *
    * The acknowledgement is not proof for the settings behind daylight tracking.
-   * `0x2003`, `0x2004` and `0x2005` are all answered with status `00` and then,
-   * on a lamp that has never been through the MyDyson app's location set-up,
-   * simply not stored — measured on a CF06 on 2026-09-22 by reading them back
-   * in the same session, immediately after the write. A plugin that believed
-   * the reply reported success for months while the lamp sat on the factory
-   * location and daylight tracking could not run.
+   * `0x2003` and `0x2004` are answered with status `00` and then, on a lamp
+   * that does not know the time, simply not stored — measured on a CF06 on
+   * 2026-09-22 by reading them back in the same session, immediately after the
+   * write. A plugin that believed the reply reported success while the lamp
+   * sat on the factory location and daylight tracking could not run.
    *
    * Whether to try again depends on which refusal this is, and the two look
    * alike from here. The lamp drops writes sporadically, and repetition is the
-   * established answer to that; but it also refuses its location outright until
-   * the MyDyson app has set one up, and there five attempts in a row were
-   * refused as uniformly as one, so retrying only spends writes and reads on a
-   * link that would rather be left alone. Callers say which they are facing.
+   * established answer to that; but a lamp without a clock refused its
+   * location five times in a row as uniformly as once, so retrying the
+   * location only spends writes and reads on a link that would rather be left
+   * alone. Callers say which they are facing.
    *
-   * @param attempts how many times to write before giving up. One for a
-   * refusal known to be settled, more where the lamp is merely being fickle.
+   * @param attempts how many times to write before giving up. One where a
+   * refusal has a cause that retrying cannot fix, more where the lamp is
+   * merely being fickle.
    * @param remedy what to tell the user when it will not take, if anything.
    * @returns whether the lamp ended up holding the wanted value.
    */
@@ -2008,16 +2015,15 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Publish what the lamp reports, minus the echo of our own commands.
+   * Publish what the lamp reports, minus the echo of our own commands, and
+   * read daylight mode out of it where it can.
    *
    * A value the user just set must stay where they put it; the steps the lamp
    * takes on its way there are not news, they are the command happening.
-   */
-  /**
-   * Take what the lamp reports, and read daylight mode out of it where it can.
    *
-   * A fallback for a lamp that does not answer the question asked on connecting,
-   * which would otherwise leave the mode unknown until something changed it.
+   * The daylight inference is a fallback for a lamp that does not answer the
+   * question asked on connecting, which would otherwise leave the mode unknown
+   * until something changed it.
    * Colour temperature moving when nobody asked for it is the tell: with
    * daylight mode off, nothing but a write moves it.
    *

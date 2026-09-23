@@ -11,10 +11,10 @@
  *
  * Runs on the Raspberry Pi, from a directory where `node-ble` is installed:
  *
- *   node daylight-test.js watch     F0:B1:… E5T-EU-… [seconds]
- *   node daylight-test.js trial     F0:B1:… E5T-EU-… [--repeat N] [--kelvin-only]
- *   node daylight-test.js attrread  F0:B1:… E5T-EU-…
- *   node daylight-test.js writescan F0:B1:… E5T-EU-…
+ *   node daylight-test.js watch     AA:BB:… E5T-EU-… [seconds]
+ *   node daylight-test.js trial     AA:BB:… E5T-EU-… [--repeat N] [--kelvin-only]
+ *   node daylight-test.js attrread  AA:BB:… E5T-EU-…
+ *   node daylight-test.js writescan AA:BB:… E5T-EU-…
  *
  * `watch` prints everything the lamp notifies. `trial` writes values and checks
  * whether they landed. `attrread` reads an attribute range, which cannot

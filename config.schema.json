@@ -71,7 +71,7 @@
               "type": "number",
               "minimum": -90,
               "maximum": 90,
-              "placeholder": "48.6719",
+              "placeholder": "48.7784",
               "description": "Decimal degrees. The lamp works out sunrise and sunset from this, which is what daylight tracking follows."
             },
             "longitude": {
@@ -79,7 +79,7 @@
               "type": "number",
               "minimum": -180,
               "maximum": 180,
-              "placeholder": "9.2807",
+              "placeholder": "9.18",
               "description": "Decimal degrees. Set both or neither — a lamp is not told half a location."
             },
             "dayStart": {
@@ -100,7 +100,7 @@
               "title": "Year of birth",
               "type": "integer",
               "minimum": 1900,
-              "placeholder": "1974",
+              "placeholder": "1985",
               "description": "Age adjustment: the lamp trims the brightness of its Study and Relax modes to suit the main user’s eyes. The lamp stores the year only, encrypted, and keeps it to the Dyson account that set it. Leave empty to leave the setting alone."
             },
             "ageAdjust": {
