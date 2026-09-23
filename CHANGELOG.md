@@ -5,6 +5,21 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **"Use this day" and "Apply the age adjustment" are always shown, above the
+  fields they govern**, instead of appearing only once a time or a year was
+  filled in — which left "Use this day" invisible until then. Because the
+  settings page now fills in the age switch's default on every light,
+  `ageAdjust` without `yearOfBirth` is ignored rather than refused.
+- The README says a brightness change ends daylight tracking too, not only a
+  colour temperature, and has a new section, *How this was worked out*: the
+  decompiled Android app, the analysed iOS Bluetooth capture, and the
+  measurements on a real lamp behind what the plugin does. *Credits* now says
+  what came from the hass-dyson notes and what did not.
+
 ## [1.7.0] — 2026-09-23
 
 ### Changed

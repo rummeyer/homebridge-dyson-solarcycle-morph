@@ -131,8 +131,8 @@ adjusting to suit the room. Asking for 100% and seeing 88% is the lamp doing its
 job — turn Auto Brightness off if you would rather it stayed put.
 
 **Setting a brightness or a colour temperature ends daylight tracking**, and
-the Daylight switch turns itself off when you do. That is the lamp's own behaviour, not something
-the plugin decides. Flip the switch back on to resume.
+the Daylight switch turns itself off when you do. That is the lamp's own
+behaviour, not something the plugin decides. Flip the switch back on to resume.
 
 **The three mode switches work while the lamp is off**, though the lamp itself
 will not have them until it is lit — it takes none of the three while it is off.
@@ -160,10 +160,11 @@ Everything except the lights is optional.
 | **Lights → BLE MAC address** | Filled in by the scan |
 | **Lights → Serial number** | Filled in by the scan. Identifies the accessory, so changing it creates a new one |
 | **Lights → Latitude**, **Longitude** | Where the lamp stands, in decimal degrees. Optional; set both or neither |
-| **Lights → Year of birth** | Turns on the lamp's age adjustment. Optional |
-| **Lights → Apply the age adjustment** | The lamp's own switch for it. On by default |
+| **Lights → Use this day** | Puts the two times below in the lamp. Off by default, and off they are ignored |
 | **Lights → Day starts at** | Optional. Replaces the real sunrise, as `HH:MM` |
 | **Lights → Day ends at** | Optional. Replaces the real sunset |
+| **Lights → Apply the age adjustment** | The lamp's own switch for it. On by default; only used with a year of birth |
+| **Lights → Year of birth** | Turns on the lamp's age adjustment. Optional |
 | **Lights → Expose daylight tracking** | The Daylight switch. On by default |
 | **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
 | **Lights → Expose movement mode** | The Movement switch. On by default |
@@ -232,13 +233,12 @@ the lamp. The example above shows every key at once, which no real config needs.
 | `adapter` | string | system default | e.g. `hci1` |
 
 **A light with something wrong with it is skipped, and the rest still load** —
-the message names the entry and the key. Three combinations are refused rather
-than half-applied, because half of any of them would quietly do the wrong thing:
+the message names the entry and the key. Two combinations are refused rather
+than half-applied, because half of either would quietly do the wrong thing:
 
 - `latitude` without `longitude`, or the other way round. A lamp told only its
   latitude would put itself on the Greenwich meridian and track the wrong sunset
   all year.
-- `ageAdjust` without `yearOfBirth`. There would be nothing to adjust for.
 - `customDay` on without both `dayStart` and `dayEnd`. With it off, the times are
   not checked at all, since they are not used.
 
@@ -312,8 +312,8 @@ are used:
 ```
 
 With `customDay` off, which is the default, the times are ignored and can stay
-filled in for later. On the settings page the switch is **Use this day**, and it
-appears once either time is filled in.
+filled in for later. On the settings page the switch is **Use this day**, just
+above the two times.
 
 The lamp keeps its warm-to-cool-to-warm shape and fits it between those two
 times instead of the sun's, and falls back to a softer, warmer baseline once the
@@ -496,12 +496,62 @@ The protocol, including where a real lamp disagreed with the published notes, is
 written up in [docs/PROTOCOL.md](docs/PROTOCOL.md). Building, testing and
 releasing are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## How this was worked out
+
+Dyson publishes nothing about this lamp, and the published notes this plugin
+started from turned out to be the beginning rather than the answer. Most of
+what the plugin does had to be found out, and much of it the slow way:
+
+- **The MyDyson Android app was decompiled and read**, class by obfuscated
+  class. Its identifiers change from one class to the next, and it builds its
+  Bluetooth UUIDs at runtime from four-digit fragments, so searching it for a
+  UUID finds nothing. Its routing table for messages looks complete and is not:
+  the message that sets the lamp's clock is built elsewhere, and missing it cost
+  two days.
+- **The iOS app's Bluetooth traffic was captured and analysed.** An iPhone
+  records it in a sysdiagnose once Apple's Bluetooth logging profile is
+  installed. Its packet log was parsed directly, message by message, and put
+  side by side with what this plugin sends. That is where the clock message
+  (`0x80`) and attribute subscriptions (`0x96`) came from. Neither appears in
+  the notes this started from.
+- **Everything was measured against a real lamp**, from a Raspberry Pi, with
+  test builds put onto it as prereleases. Connection reliability was measured
+  over repeated runs, which is why the plugin makes four quick attempts rather
+  than one clever one: one succeeds about two times in three, four together
+  above 98%. The 150 ms gap between writes has a 100 ms measurement behind
+  it. The whole attribute range `0x2000`–`0x2040` was read one attribute at a
+  time. Daylight tracking was checked against a NOAA sunrise calculation,
+  across deliberate power cuts and overnight, and by watching a sunrise from
+  the lamp's log.
+- **Where the lamp and the published notes disagreed, the lamp won.** They
+  place everything under one Bluetooth service where this lamp uses three,
+  call the encryption AES-GCM where it is AES-CBC with an HMAC, require
+  acknowledged writes the lamp does not even offer, and describe a motion
+  sensor that never reports motion.
+- **The lamp does not always tell the truth.** For some settings it confirms a
+  write and throws the value away, so the plugin reads those settings back
+  rather than trusting the reply. Why the lamp would not keep a location took
+  two days, dozens of refused writes, and eight theories that were tested and
+  dropped: write order, the app's timing, a beacon exchange, a hidden set-up
+  flag. It turned out that nobody had told it the time.
+
+The findings, including the wrong turns, are in
+[docs/PROTOCOL.md](docs/PROTOCOL.md), so nobody has to take the same wrong
+turns again.
+
 ## Credits
 
-The BLE protocol was reverse-engineered from the MyDyson Android app by
-**S-Termi** and documented in
-[cmgrayb/hass-dyson](https://github.com/cmgrayb/hass-dyson). This plugin is an
-independent TypeScript implementation, cross-checked against that reference.
+The starting point was the BLE notes by **S-Termi**, reverse-engineered from the
+MyDyson Android app and published in
+[cmgrayb/hass-dyson](https://github.com/cmgrayb/hass-dyson): the handshake, the
+message framing and the main control characteristics, enough to get a
+connection going and the light switching. Most of the rest — the clock, the
+location and the day, the attribute channel and its acknowledgements,
+subscriptions, the presets, age adjustment, and every correction to those
+notes — came from reading the decompiled Android app again, analysing the iOS
+app's Bluetooth traffic, and measuring a real lamp; see
+[How this was worked out](#how-this-was-worked-out). This plugin is an
+independent TypeScript implementation.
 
 Not affiliated with or endorsed by Dyson.
 

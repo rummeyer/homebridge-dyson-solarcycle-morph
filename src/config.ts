@@ -71,8 +71,8 @@ export interface LightConfig {
   yearOfBirth?: number;
   /**
    * Whether the lamp applies the age adjustment. Only consulted when
-   * {@link yearOfBirth} is set, and on by default when it is: a year with the
-   * adjustment off does nothing at all.
+   * {@link yearOfBirth} is set, and ignored otherwise; on by default, since a
+   * year with the adjustment off does nothing at all.
    */
   ageAdjust?: boolean;
 }
@@ -189,9 +189,10 @@ export function validateLightConfig(light: Partial<LightConfig>, index: number):
           `(got ${JSON.stringify(light.yearOfBirth)})`,
       );
     }
-  } else if (light.ageAdjust !== undefined) {
-    problems.push(`${where} sets ageAdjust with no yearOfBirth — there is nothing to adjust for`);
   }
+  // ageAdjust without a year is not refused: the settings page shows the switch
+  // on every light and fills in its default, so it is there whether or not
+  // anyone meant it, and with no year it is simply not used.
   for (const [field, limit] of [['latitude', 90], ['longitude', 180]] as const) {
     const value = light[field];
     if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > limit)) {

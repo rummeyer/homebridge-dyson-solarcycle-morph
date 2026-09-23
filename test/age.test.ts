@@ -149,8 +149,10 @@ test('a year of birth outside the app’s own picker is rejected', () => {
   assert.match(validateLightConfig({ ...light, yearOfBirth: 1985.5 }, 0)[0]!, /whole year/);
 });
 
-test('the switch on its own is rejected, because it would adjust for nobody', () => {
+test('the switch on its own is ignored, not refused', () => {
   const light = { name: 'Lamp', mac: 'AA:BB:CC:DD:EE:FF', serial: 'E5T-EU-6DYYJX5E' };
-  assert.match(validateLightConfig({ ...light, ageAdjust: true }, 0)[0]!, /no yearOfBirth/);
+  // Ignored rather than refused: the settings page fills in the switch's
+  // default on every light, year or not.
+  assert.deepEqual(validateLightConfig({ ...light, ageAdjust: true }, 0), []);
   assert.deepEqual(validateLightConfig({ ...light, yearOfBirth: 1985, ageAdjust: false }, 0), []);
 });

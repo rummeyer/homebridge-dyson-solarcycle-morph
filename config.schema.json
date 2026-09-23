@@ -87,7 +87,7 @@
               "type": "string",
               "pattern": "^([01]?[0-9]|2[0-3]):[0-5][0-9]$",
               "placeholder": "08:00",
-              "description": "Optional. Replaces the real sunrise for this lamp — daylight tracking then begins here instead. Only used while \"Use this day\" below is on."
+              "description": "Optional. Replaces the real sunrise for this lamp — daylight tracking then begins here instead. Only used while \"Use this day\" above is on."
             },
             "dayEnd": {
               "title": "Day ends at",
@@ -100,10 +100,7 @@
               "title": "Use this day",
               "type": "boolean",
               "default": false,
-              "condition": {
-                "functionBody": "return model.lights && model.lights[arrayIndices[0]] && (model.lights[arrayIndices[0]].dayStart || model.lights[arrayIndices[0]].dayEnd);"
-              },
-              "description": "Puts the two times above in the lamp. Off, they are ignored and the lamp's day is not touched. Turning it off does not undo a day already written: the lamp keeps it until the MyDyson app sets it back."
+              "description": "Puts the two times below in the lamp. Off, they are ignored and the lamp's day is not touched. Turning it off does not undo a day already written: the lamp keeps it until the MyDyson app sets it back."
             },
             "yearOfBirth": {
               "title": "Year of birth",
@@ -116,10 +113,7 @@
               "title": "Apply the age adjustment",
               "type": "boolean",
               "default": true,
-              "condition": {
-                "functionBody": "return model.lights && model.lights[arrayIndices[0]] && model.lights[arrayIndices[0]].yearOfBirth;"
-              },
-              "description": "The lamp’s own switch for it. Turning this off leaves the year in place but stops the lamp acting on it."
+              "description": "The lamp’s own switch for the age adjustment. Only used when a year of birth is set below. Turning it off leaves the year in the lamp but stops it acting on it."
             },
             "daylightSwitch": {
               "title": "Expose daylight tracking",
@@ -177,11 +171,11 @@
                 "lights[].serial",
                 "lights[].latitude",
                 "lights[].longitude",
+                "lights[].customDay",
                 "lights[].dayStart",
                 "lights[].dayEnd",
-                "lights[].customDay",
-                "lights[].yearOfBirth",
                 "lights[].ageAdjust",
+                "lights[].yearOfBirth",
                 "lights[].daylightSwitch",
                 "lights[].autoBrightnessSwitch",
                 "lights[].movementSwitch",
