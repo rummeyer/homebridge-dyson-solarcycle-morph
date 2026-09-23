@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <a href="https://paypal.me/rummeyer"><img src="https://img.shields.io/badge/donate-PayPal-yellow" alt="Donate with PayPal"></a>
+  <a href="https://buymeacoffee.com/rummeyer"><img src="https://img.shields.io/badge/donate-Buy%20Me%20a%20Coffee-yellow" alt="Buy Me a Coffee"></a>
 </p>
 
 ---
