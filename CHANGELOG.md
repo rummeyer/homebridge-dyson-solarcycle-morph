@@ -5,6 +5,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.4] — 2026-09-25
+
+### Changed
+
+- **The settings page says "daytime" instead of "day".** The switch is now
+  **Use custom daytime** and the two times **Daytime start** and **Daytime
+  end**. Only the labels changed: the config keys are still `customDay`,
+  `dayStart` and `dayEnd`, so existing configs keep working.
+
 ## [1.7.3] — 2026-09-23
 
 ### Changed
