@@ -19,7 +19,7 @@
         "title": "Bluetooth adapter",
         "type": "string",
         "placeholder": "hci0",
-        "description": "Leave empty to use the system default adapter."
+        "description": "Leave empty to use the system default adapter. Only needed when the machine has more than one, for example a USB dongle next to the built-in one. <code>hciconfig</code> lists them."
       },
       "lights": {
         "title": "Lights",
