@@ -165,9 +165,9 @@ Everything except the lights is optional.
 | **Lights → BLE MAC address** | Filled in by the scan |
 | **Lights → Serial number** | Filled in by the scan. Identifies the accessory, so changing it creates a new one |
 | **Lights → Latitude**, **Longitude** | Where the lamp stands, in decimal degrees. Optional; set both or neither |
-| **Lights → Use this day** | Puts the two times below in the lamp. Off by default, and off they are ignored |
-| **Lights → Day starts at** | Optional. Replaces the real sunrise, as `HH:MM` |
-| **Lights → Day ends at** | Optional. Replaces the real sunset |
+| **Lights → Use custom daytime** | Puts the two times below in the lamp. Off by default, and off they are ignored |
+| **Lights → Daytime start** | Optional. Replaces the real sunrise, as `HH:MM` |
+| **Lights → Daytime end** | Optional. Replaces the real sunset |
 | **Lights → Apply the age adjustment** | The lamp's own switch for it. On by default; only used with a year of birth |
 | **Lights → Year of birth** | Turns on the lamp's age adjustment. Optional |
 | **Lights → Expose daylight tracking** | The Daylight switch. On by default |
@@ -304,7 +304,7 @@ connection goes out through a VPN. Nothing is sent to either service: they read
 the public address the request arrives from, which is what every site this
 machine contacts already sees. Check what it filled in before saving.
 
-### A day of your own
+### A custom daytime
 
 Daylight tracking follows the real sunrise and sunset by default. Two optional
 fields replace that with a day you choose, and a switch decides whether they
@@ -317,7 +317,7 @@ are used:
 ```
 
 With `customDay` off, which is the default, the times are ignored and can stay
-filled in for later. On the settings page the switch is **Use this day**, just
+filled in for later. On the settings page the switch is **Use custom daytime**, just
 above the two times.
 
 The lamp keeps its warm-to-cool-to-warm shape and fits it between those two

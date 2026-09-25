@@ -91,8 +91,8 @@ export class MorphAccessory {
     // them without the switch and would otherwise stop applying them in silence.
     if (config.customDay !== true && (config.dayStart !== undefined || config.dayEnd !== undefined)) {
       platform.log.info(
-        `${config.name} has dayStart/dayEnd set but "Use this day" off, so they are ignored and the lamp ` +
-          'keeps its own day. Turn it on to apply them.',
+        `${config.name} has dayStart/dayEnd set but "Use custom daytime" off, so they are ignored and the lamp ` +
+          'keeps its own daytime. Turn it on to apply them.',
       );
     }
 
