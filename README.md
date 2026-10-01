@@ -158,6 +158,10 @@ own once the link does.
 
 Everything except the lights is optional.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/rummeyer/homebridge-dyson-solarcycle-morph/main/assets/screenshots/settings.png" width="520" alt="The settings page in the Homebridge UI: the MyDyson account, finding the lights, where they are, and one lamp's settings: address, serial, location, daytime, age adjustment and switches">
+</p>
+
 | Setting | |
 |---|---|
 | **Name** | What the plugin is called in the Homebridge log |
