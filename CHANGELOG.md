@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] — 2026-10-14
+
+### Added
+
+- **Operating hours for each light.** The settings page now shows, under
+  "Configured", how long each light has been on, e.g. "12.4 h on since
+  15.10.2026". The lamp keeps no such count that it shares over Bluetooth, so
+  the plugin counts for itself: only time the light was on while Homebridge was
+  running and connected to it, starting from the day you install this version.
+  Saved every ten minutes and at shutdown.
+
 ## [1.7.7] — 2026-10-14
 
 ### Fixed
