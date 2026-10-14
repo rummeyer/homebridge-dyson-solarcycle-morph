@@ -22,7 +22,7 @@ export class MorphPlatform implements DynamicPlatformPlugin {
   /** Accessories restored from Homebridge's cache, keyed by UUID. */
   private readonly cached = new Map<string, PlatformAccessory>();
   private readonly lamps: MorphAccessory[] = [];
-  private readonly credentials: CredentialStore;
+  readonly credentials: CredentialStore;
 
   constructor(
     public readonly log: Logger,

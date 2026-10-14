@@ -28,6 +28,13 @@ export interface StoredAccount {
   created: string;
 }
 
+/** How long a lamp has been lit while the plugin was connected to it. */
+export interface StoredHours {
+  seconds: number;
+  /** ISO timestamp of when counting began. */
+  since: string;
+}
+
 export class CredentialStore {
   private readonly directory: string;
   private store: ReturnType<typeof storage.create> | undefined;
@@ -91,6 +98,31 @@ export class CredentialStore {
 
   async deleteAccount(email: string): Promise<void> {
     await (await this.open()).removeItem(`${email.trim().toLowerCase()}:account`);
+  }
+
+  /**
+   * A lamp's operating hours, as counted by the plugin.
+   *
+   * Kept here rather than in a store of its own because the settings page reads
+   * this one already, and it is the plugin's only persistent state.
+   */
+  async getHours(serial: string): Promise<StoredHours | undefined> {
+    const stored: unknown = await (await this.open()).getItem(CredentialStore.hoursKey(serial));
+    if (!stored || typeof stored !== 'object') {
+      return undefined;
+    }
+    const { seconds, since } = stored as Partial<StoredHours>;
+    return typeof seconds === 'number' && Number.isFinite(seconds) && typeof since === 'string'
+      ? { seconds, since }
+      : undefined;
+  }
+
+  async setHours(serial: string, hours: StoredHours): Promise<void> {
+    await (await this.open()).setItem(CredentialStore.hoursKey(serial), hours);
+  }
+
+  private static hoursKey(serial: string): string {
+    return `${serial.trim().toUpperCase()}:hours`;
   }
 
   /** Serials that have stored credentials. */

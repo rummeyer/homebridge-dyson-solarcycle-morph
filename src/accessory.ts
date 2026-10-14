@@ -3,6 +3,7 @@ import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge
 
 import { parseTimeOfDay } from './config.js';
 import type { ResolvedLightConfig } from './config.js';
+import { OperatingHours } from './dyson/hours.js';
 import { DysonMorphLamp } from './dyson/lamp.js';
 import { kelvinToMired, miredToKelvin, MAX_KELVIN, MIN_KELVIN, PRESETS } from './dyson/protocol.js';
 import type { Preset } from './dyson/protocol.js';
@@ -15,6 +16,14 @@ import type { MorphPlatform } from './platform.js';
  * nobody reads it as a state the lamp is in.
  */
 const RELEASE_MS = 1_000;
+
+/**
+ * How often the operating hours are written out while they grow.
+ *
+ * Shutdown writes them too, so this only bounds what a crash or a pulled plug
+ * can lose, and it is a rough count to begin with.
+ */
+const HOURS_SAVE_MS = 10 * 60_000;
 
 /**
  * Every subtype this plugin has put a Switch service under.
@@ -52,6 +61,10 @@ export class MorphAccessory {
   private movement?: Service;
   private readonly presets = new Map<Preset, Service>();
   private readonly lamp: DysonMorphLamp;
+  private hours?: OperatingHours;
+  private hoursSince = '';
+  private hoursSaved = 0;
+  private hoursTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly platform: MorphPlatform,
@@ -162,9 +175,13 @@ export class MorphAccessory {
 
     // Tell HomeKit the moment the link goes, rather than leaving it showing the
     // last value as though it were current.
-    this.lamp.on('disconnected', () => this.markUnreachable());
+    this.lamp.on('disconnected', () => {
+      this.hours?.set(false);
+      this.markUnreachable();
+    });
     this.lamp.on('connected', () => {
       const state = this.lamp.getState();
+      this.hours?.set(state.on);
       this.lightbulb.updateCharacteristic(Characteristic.On, state.on);
       this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
       this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
@@ -178,6 +195,7 @@ export class MorphAccessory {
     }
 
     this.lamp.on('state', (state) => {
+      this.hours?.set(this.lamp.isConnected() && state.on);
       this.lightbulb.updateCharacteristic(Characteristic.On, state.on);
       this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
       this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
@@ -288,6 +306,7 @@ export class MorphAccessory {
   }
 
   async start(): Promise<void> {
+    await this.loadHours();
     try {
       await this.lamp.start();
     } catch (error) {
@@ -296,7 +315,51 @@ export class MorphAccessory {
   }
 
   async stop(): Promise<void> {
+    clearInterval(this.hoursTimer);
+    await this.saveHours();
     await this.lamp.stop();
+  }
+
+  /**
+   * Pick up the count where the last run left it.
+   *
+   * A store that cannot be read costs the count, not the lamp: the light still
+   * starts, and counting simply does not happen this run.
+   */
+  private async loadHours(): Promise<void> {
+    try {
+      const stored = await this.platform.credentials.getHours(this.config.serial);
+      this.hoursSince = stored?.since ?? new Date().toISOString();
+      this.hoursSaved = stored?.seconds ?? 0;
+      if (!stored) {
+        // Written straight away, so that "since" is the day counting began and
+        // not whichever restart first saw the lamp lit.
+        await this.platform.credentials.setHours(this.config.serial, { seconds: 0, since: this.hoursSince });
+      }
+      this.hours = new OperatingHours(this.hoursSaved);
+      this.hours.set(this.lamp.isConnected() && this.lamp.getState().on);
+      this.hoursTimer = setInterval(() => void this.saveHours(), HOURS_SAVE_MS);
+      this.hoursTimer.unref();
+    } catch (error) {
+      this.platform.log.warn(`Could not read the operating hours of ${this.config.name}: ${describeError(error)}`);
+    }
+  }
+
+  private async saveHours(): Promise<void> {
+    if (!this.hours) {
+      return;
+    }
+    const seconds = Math.round(this.hours.total());
+    // Nothing to write while the lamp is off, which is most of the time.
+    if (seconds === this.hoursSaved) {
+      return;
+    }
+    try {
+      await this.platform.credentials.setHours(this.config.serial, { seconds, since: this.hoursSince });
+      this.hoursSaved = seconds;
+    } catch (error) {
+      this.platform.log.debug(`Could not save the operating hours of ${this.config.name}: ${describeError(error)}`);
+    }
   }
 
   /**

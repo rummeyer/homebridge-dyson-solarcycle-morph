@@ -291,7 +291,7 @@ class MorphUiServer extends HomebridgePluginUiServer {
     return { message: 'Signed out. Request a new code to authorise again.' };
   }
 
-  /** Report which of the given serials already have stored credentials. */
+  /** Report which of the given serials already have stored credentials, and how long each has been lit. */
   async pairStatus(request) {
     const serials = Array.isArray(request?.serials) ? request.serials : [];
     const store = this.store();
@@ -301,7 +301,7 @@ class MorphUiServer extends HomebridgePluginUiServer {
         continue;
       }
       const stored = await store.get(serial);
-      paired[serial] = stored ? { created: stored.created } : null;
+      paired[serial] = stored ? { created: stored.created, hours: (await store.getHours(serial)) ?? null } : null;
     }
     return { paired };
   }
