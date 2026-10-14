@@ -178,6 +178,7 @@ Everything except the lights is optional.
 | **Lights → Expose auto brightness** | The Auto Brightness switch. On by default |
 | **Lights → Expose movement mode** | The Movement switch. On by default |
 | **Lights → Expose the preset modes** | The Study, Relax and Precision switches. On by default |
+| **Lights → Use Matter for the light (shows power)** | Off by default. See [Power in the Home app](#power-in-the-home-app) |
 | **Bluetooth adapter** | Only needed if the host has more than one, e.g. `hci1` |
 
 Turning all four switches off leaves the lamp on its own: there is then nothing
@@ -236,6 +237,7 @@ the lamp. The example above shows every key at once, which no real config needs.
 | `lights[].autoBrightnessSwitch` | boolean | `true` | |
 | `lights[].movementSwitch` | boolean | `true` | |
 | `lights[].presetSwitches` | boolean | `true` | Adds three switches, not one |
+| `lights[].matter` | boolean | `false` | The light over Matter, with its power draw. Needs Matter on for the bridge |
 | `dysonAccount.email` | string | unset | Used by the settings page, never by the plugin |
 | `dysonAccount.country` | string | `GB` | Two letters |
 | `dysonAccount.password` | string | unset | Only while authorising; **Forget password** clears it |
@@ -407,6 +409,65 @@ and only that account can change it.
 
 Clearing the year altogether is not something the plugin does; the MyDyson app's
 own age-adjustment screen has a remove option for that.
+
+### Power in the Home app
+
+The lamp does not measure what it draws, so the plugin works it out from the
+brightness and colour temperature, using a table measured on a CD06 desk light
+on a metering plug. It is right to within about 0.3 W:
+
+| Brightness | 2700 K | 4600 K | 6500 K |
+|---|---|---|---|
+| Off | 0.3 W | 0.3 W | 0.3 W |
+| 0 % | 1.6 W | 1.8 W | 1.65 W |
+| 25 % | 5.3 W | 5.0 W | 4.75 W |
+| 50 % | 9.3 W | 8.3 W | 7.9 W |
+| 75 % | 11.2 W | 11.2 W | 11.25 W |
+| 100 % | 11.3 W | 11.2 W | 11.35 W |
+
+Above about 75 % the draw stays flat, close to Dyson's rated 11.2 W. With Auto
+Brightness on, the estimate follows the brightness the lamp reports, not the
+one you set.
+
+**The Home app only shows watts for a Matter device**, so this needs the light
+on Matter. HomeKit's own protocol has no place for it. Turn on **Use Matter for
+the light** for that lamp, and then:
+
+1. In the Homebridge UI, open this plugin's bridge settings and **turn on
+   Matter** (Homebridge 2 needed). Restart.
+2. In the Home app, add the bridge's **Matter** code, which the same bridge
+   settings and the Homebridge log show. Home warns that it is not certified;
+   add it anyway.
+3. The light now comes over Matter, as a new accessory. The old HomeKit light
+   is removed, so **rooms, scenes and automations that used it need setting up
+   again** with the new one.
+
+The watts are in the light's settings in the Home app, not on its tile. The
+switches stay on HomeKit, under the same bridge you paired before. Matter has
+no plain switch the Home app shows as one: an outlet stays an outlet, and a
+light switch does not appear at all. So the bridge is paired twice, once for
+each protocol.
+
+Only the CD06 has been measured. The lamp reports its product type when it
+connects, and for any other the light still works over Matter but shows no
+watts.
+
+Turning the option off again moves the light back to HomeKit, again as a new
+accessory.
+
+**More than one lamp** shares the one Matter pairing: every light set to
+Matter sits behind the same bridge. A lamp switched to Matter after the bridge
+is paired turns up in the Home app by itself, with no code to enter. It can
+take a minute, or closing and reopening the Home app.
+
+**Counting the energy.** The Home app shows the watts now and adds nothing up.
+[Homebridge Appliance Monitor](https://github.com/rummeyer/homebridge-appliance-monitor)
+can: it joins the bridge as a second Matter controller and keeps each lamp's
+energy per day, week, month and year. Pair it with the bridge's code from
+**Turn On Pairing Mode** in the Home app, and with two lamps or more, choose
+each lamp as its **Device** there, since they share the pairing. If a lamp is
+plugged into a metered plug that Appliance Monitor watches as well, set the
+lamp's **Part of** to that plug, so it is not counted twice in the totals.
 
 
 ## If something goes wrong

@@ -5,6 +5,19 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Power draw in the Home app.** A new per-light option, **Use Matter for the
+  light (shows power)**, publishes the light over Matter instead of HomeKit, and
+  the Home app then shows its power draw in the light's settings. The lamp
+  measures nothing itself, so the watts come from a table measured on a CD06
+  desk light, by brightness and colour temperature: 0.3 W off, up to about
+  11.3 W. The switches stay on HomeKit. Off by default, and nothing changes
+  unless it is turned on; see [Power in the Home app](README.md#power-in-the-home-app).
+- The log says once which product type and firmware each lamp reports.
+
 ## [1.8.1] — 2026-10-14
 
 ### Fixed

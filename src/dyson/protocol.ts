@@ -437,6 +437,40 @@ export interface DysonMessage {
   payload: Buffer;
 }
 
+/** What the lamp says about itself in {@link MsgType.PRODUCT_INFO}. */
+export interface ProductInfo {
+  /** Dyson's product type, `552` for the CD06 desk light. */
+  productType: string;
+  /** As the MyDyson account shows it, e.g. `0552PF.00.05.017.0002`. */
+  firmware: string;
+}
+
+/**
+ * Read the product-info answer.
+ *
+ * Seen on two CD06: `05 11 02 00` then `PF000552` and NUL padding. The four
+ * bytes are the firmware version — 5, 17 and a uint16 LE build of 2 — which is
+ * how the account spells it after the product type, `0552PF.00.05.017.0002`.
+ *
+ * @returns `undefined` for anything not shaped like that.
+ */
+export function parseProductInfo(payload: Buffer): ProductInfo | undefined {
+  if (payload.length < 8) {
+    return undefined;
+  }
+  const text = payload.subarray(4).toString('latin1').replace(/\0.*$/s, '');
+  const match = /^([A-Z]{2})(\d+)$/.exec(text);
+  if (!match) {
+    return undefined;
+  }
+  const productType = String(Number(match[2]));
+  const build = String(payload.readUInt16LE(2)).padStart(4, '0');
+  const firmware =
+    `${productType.padStart(4, '0')}${match[1]}.00.` +
+    `${String(payload[0]).padStart(2, '0')}.${String(payload[1]).padStart(3, '0')}.${build}`;
+  return { productType, firmware };
+}
+
 /**
  * Split a logical message into ATT-sized fragments.
  *

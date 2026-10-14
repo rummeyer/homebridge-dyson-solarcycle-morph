@@ -77,7 +77,9 @@ import {
   MsgType,
   fragmentMessage,
   lumensToPercent,
+  parseProductInfo,
   percentToLumens,
+  type ProductInfo,
 } from './protocol.js';
 
 /** Characteristics we look for. Anything else the lamp exposes is ignored. */
@@ -515,6 +517,9 @@ export class DysonMorphLamp extends EventEmitter {
     preset: 'none',
   };
 
+  /** What the lamp said it is, on the last connect that answered. */
+  private productInfo?: ProductInfo;
+
   /** What the user last asked for. Reconciliation aims at this, not at guesses. */
   private desired: Partial<LampState> = {};
 
@@ -535,6 +540,11 @@ export class DysonMorphLamp extends EventEmitter {
   /** Last known state. Updated by notifications and polling. */
   getState(): Readonly<LampState> {
     return this.state;
+  }
+
+  /** The lamp's product type and firmware, once it has connected and said. */
+  getProductInfo(): Readonly<ProductInfo> | undefined {
+    return this.productInfo;
   }
 
   isConnected(): boolean {
@@ -1097,9 +1107,18 @@ export class DysonMorphLamp extends EventEmitter {
   private async authenticate(): Promise<void> {
     // Some firmware needs the product-info exchange before it will talk auth.
     await this.sendMessage(MsgType.REQUEST_PRODUCT_INFO);
-    await this.waitForMessage(MsgType.PRODUCT_INFO, 5_000).catch(() => {
-      this.log.debug('No product info returned; continuing with the handshake');
-    });
+    await this.waitForMessage(MsgType.PRODUCT_INFO, 5_000).then(
+      (message) => {
+        const info = parseProductInfo(message.payload);
+        if (info && info.productType !== this.productInfo?.productType) {
+          this.log.info(`${this.mac} is product type ${info.productType}, firmware ${info.firmware}`);
+        }
+        this.productInfo = info ?? this.productInfo;
+      },
+      () => {
+        this.log.debug('No product info returned; continuing with the handshake');
+      },
+    );
 
     const nonce = randomBytes(16);
     await this.sendMessage(MsgType.REAUTH_PAYLOAD_A, buildReauthPayloadA(this.accountId, this.aesKey, nonce));

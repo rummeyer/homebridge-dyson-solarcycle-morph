@@ -66,6 +66,12 @@
               "default": true,
               "description": "Adds the lamp's Study, Relax and Precision modes as switches. Only one can be on at a time, which the lamp itself enforces."
             },
+            "matter": {
+              "title": "Use Matter for the light (shows power)",
+              "type": "boolean",
+              "default": false,
+              "description": "Publishes the light over Matter instead of HomeKit, so the Home app shows its power draw in the light's settings. The switches stay on HomeKit. Needs Homebridge 2 with Matter turned on for this plugin's bridge, and the bridge's Matter code added in the Home app. The light then appears there as a new accessory: rooms, scenes and automations that use it have to be set up again."
+            },
             "latitude": {
               "title": "Latitude",
               "type": "number",
@@ -179,7 +185,8 @@
                 "lights[].daylightSwitch",
                 "lights[].autoBrightnessSwitch",
                 "lights[].movementSwitch",
-                "lights[].presetSwitches"
+                "lights[].presetSwitches",
+                "lights[].matter"
               ]
             }
           ]

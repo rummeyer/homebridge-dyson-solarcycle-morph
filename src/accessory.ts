@@ -5,6 +5,7 @@ import { parseTimeOfDay } from './config.js';
 import type { ResolvedLightConfig } from './config.js';
 import { OperatingHours } from './dyson/hours.js';
 import { DysonMorphLamp } from './dyson/lamp.js';
+import { MatterLight } from './matter.js';
 import { kelvinToMired, miredToKelvin, MAX_KELVIN, MIN_KELVIN, PRESETS } from './dyson/protocol.js';
 import type { Preset } from './dyson/protocol.js';
 import type { MorphPlatform } from './platform.js';
@@ -36,8 +37,8 @@ const SWITCH_SUBTYPES = ['daylight', 'auto', 'movement', ...Object.keys(PRESETS)
 
 /** The two accessories one lamp is made of. */
 export interface MorphAccessories {
-  /** The lamp itself, and nothing but the lamp. */
-  light: PlatformAccessory;
+  /** The lamp itself, and nothing but the lamp. Absent when the light is on Matter. */
+  light?: PlatformAccessory;
   /** Every switch, on an accessory of its own. Absent when all are turned off. */
   switches?: PlatformAccessory;
 }
@@ -55,7 +56,8 @@ export interface MorphAccessories {
  * state events correct us once it comes back.
  */
 export class MorphAccessory {
-  private readonly lightbulb: Service;
+  private readonly lightbulb?: Service;
+  private readonly matter?: MatterLight;
   private daylight?: Service;
   private autoBrightness?: Service;
   private movement?: Service;
@@ -71,7 +73,7 @@ export class MorphAccessory {
     accessories: MorphAccessories,
     private readonly config: ResolvedLightConfig,
   ) {
-    const { Service, Characteristic } = this.platform.api.hap;
+    const { Characteristic } = this.platform.api.hap;
 
     this.lamp = new DysonMorphLamp({
       mac: config.mac,
@@ -109,54 +111,101 @@ export class MorphAccessory {
       );
     }
 
-    this.describe(accessories.light, config.serial);
+    if (accessories.light) {
+      this.describe(accessories.light, config.serial);
+      this.lightbulb = this.addLightbulb(accessories.light);
+    } else {
+      this.matter = new MatterLight(platform.api, platform.log, config, this.lamp);
+    }
     if (accessories.switches) {
       // A serial of its own, so the two are not both claiming to be the same
       // piece of hardware.
       this.describe(accessories.switches, `${config.serial}-SWITCHES`);
     }
 
+    // Tell HomeKit the moment the link goes, rather than leaving it showing the
+    // last value as though it were current.
+    this.lamp.on('disconnected', () => {
+      this.hours?.set(false);
+      this.markUnreachable();
+      this.matter?.setReachable(false);
+    });
+    this.lamp.on('connected', () => {
+      const state = this.lamp.getState();
+      this.hours?.set(state.on);
+      this.lightbulb?.updateCharacteristic(Characteristic.On, state.on);
+      this.lightbulb?.updateCharacteristic(Characteristic.Brightness, state.brightness);
+      this.lightbulb?.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
+      this.matter?.setReachable(true);
+      this.matter?.update(state);
+      this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
+      this.autoBrightness?.updateCharacteristic(Characteristic.On, state.autoBrightness);
+      this.movement?.updateCharacteristic(Characteristic.On, state.movement);
+    });
+
+    if (accessories.switches) {
+      this.addSwitches(accessories.switches);
+    }
+
+    this.lamp.on('state', (state) => {
+      this.hours?.set(this.lamp.isConnected() && state.on);
+      this.lightbulb?.updateCharacteristic(Characteristic.On, state.on);
+      this.lightbulb?.updateCharacteristic(Characteristic.Brightness, state.brightness);
+      this.lightbulb?.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
+      this.matter?.update(state);
+      // Follows the lamp leaving daylight mode on its own, which it does as soon
+      // as colour temperature is set by hand.
+      this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
+      this.autoBrightness?.updateCharacteristic(Characteristic.On, state.autoBrightness);
+      this.movement?.updateCharacteristic(Characteristic.On, state.movement);
+    });
+  }
+
+  /** The lamp as a HomeKit light, on the accessory that is nothing but that. */
+  private addLightbulb(accessory: PlatformAccessory): Service {
+    const { Service, Characteristic } = this.platform.api.hap;
+
     // Removed in 1.0.0, but a service already on a cached accessory stays there
     // until it is taken off: not adding it any more is not the same as removing
     // it, and anyone who had it enabled would keep a sensor reading motion
     // forever.
-    const staleMotion = accessories.light.getService(Service.MotionSensor);
+    const staleMotion = accessory.getService(Service.MotionSensor);
     if (staleMotion) {
-      accessories.light.removeService(staleMotion);
-      this.platform.log.info(`Removed the motion sensor from ${config.name}; it never reported anything real`);
+      accessory.removeService(staleMotion);
+      this.platform.log.info(`Removed the motion sensor from ${this.config.name}; it never reported anything real`);
     }
 
     // The same applies to the switches, which sat here until 1.1.0.
     const moved = SWITCH_SUBTYPES.filter((subtype) => {
-      const stale = accessories.light.getServiceById(Service.Switch, subtype);
+      const stale = accessory.getServiceById(Service.Switch, subtype);
       if (!stale) {
         return false;
       }
-      accessories.light.removeService(stale);
+      accessory.removeService(stale);
       return true;
     }).length;
     if (moved > 0) {
       this.platform.log.info(
-        `Took ${moved} switch${moved === 1 ? '' : 'es'} off ${config.name}; ` +
+        `Took ${moved} switch${moved === 1 ? '' : 'es'} off ${this.config.name}; ` +
           `${moved === 1 ? 'it lives' : 'they live'} on their own accessory now`,
       );
     }
 
-    this.lightbulb =
-      accessories.light.getService(Service.Lightbulb) ?? accessories.light.addService(Service.Lightbulb, config.name);
-    this.lightbulb.setCharacteristic(Characteristic.Name, config.name);
+    const lightbulb =
+      accessory.getService(Service.Lightbulb) ?? accessory.addService(Service.Lightbulb, this.config.name);
+    lightbulb.setCharacteristic(Characteristic.Name, this.config.name);
 
-    this.lightbulb
+    lightbulb
       .getCharacteristic(Characteristic.On)
       .onGet(() => this.live(() => this.lamp.getState().on))
       .onSet((value) => this.handleSet('power', () => this.lamp.setPower(value as boolean)));
 
-    this.lightbulb
+    lightbulb
       .getCharacteristic(Characteristic.Brightness)
       .onGet(() => this.live(() => this.lamp.getState().brightness))
       .onSet((value) => this.handleSet('brightness', () => this.lamp.setBrightness(value as number)));
 
-    this.lightbulb
+    lightbulb
       .getCharacteristic(Characteristic.ColorTemperature)
       // HomeKit works in mireds, which run inverse to Kelvin.
       //
@@ -173,38 +222,7 @@ export class MorphAccessory {
       .onGet(() => this.live(() => kelvinToMired(this.lamp.getState().kelvin)))
       .onSet((value) => this.handleSet('colour temperature', () => this.lamp.setColorTemperature(miredToKelvin(value as number))));
 
-    // Tell HomeKit the moment the link goes, rather than leaving it showing the
-    // last value as though it were current.
-    this.lamp.on('disconnected', () => {
-      this.hours?.set(false);
-      this.markUnreachable();
-    });
-    this.lamp.on('connected', () => {
-      const state = this.lamp.getState();
-      this.hours?.set(state.on);
-      this.lightbulb.updateCharacteristic(Characteristic.On, state.on);
-      this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
-      this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
-      this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
-      this.autoBrightness?.updateCharacteristic(Characteristic.On, state.autoBrightness);
-      this.movement?.updateCharacteristic(Characteristic.On, state.movement);
-    });
-
-    if (accessories.switches) {
-      this.addSwitches(accessories.switches);
-    }
-
-    this.lamp.on('state', (state) => {
-      this.hours?.set(this.lamp.isConnected() && state.on);
-      this.lightbulb.updateCharacteristic(Characteristic.On, state.on);
-      this.lightbulb.updateCharacteristic(Characteristic.Brightness, state.brightness);
-      this.lightbulb.updateCharacteristic(Characteristic.ColorTemperature, kelvinToMired(state.kelvin));
-      // Follows the lamp leaving daylight mode on its own, which it does as soon
-      // as colour temperature is set by hand.
-      this.daylight?.updateCharacteristic(Characteristic.On, state.daylight);
-      this.autoBrightness?.updateCharacteristic(Characteristic.On, state.autoBrightness);
-      this.movement?.updateCharacteristic(Characteristic.On, state.movement);
-    });
+    return lightbulb;
   }
 
   /**
@@ -307,6 +325,11 @@ export class MorphAccessory {
 
   async start(): Promise<void> {
     await this.loadHours();
+    try {
+      await this.matter?.register();
+    } catch (error) {
+      this.platform.log.error(`Could not publish ${this.config.name} over Matter: ${describeError(error)}`);
+    }
     try {
       await this.lamp.start();
     } catch (error) {
@@ -461,7 +484,7 @@ export class MorphAccessory {
     const { Characteristic } = this.platform.api.hap;
     const error = new Error(`${this.config.name} is not reachable over Bluetooth`);
     for (const characteristic of [Characteristic.On, Characteristic.Brightness, Characteristic.ColorTemperature]) {
-      this.lightbulb.updateCharacteristic(characteristic, error);
+      this.lightbulb?.updateCharacteristic(characteristic, error);
     }
     this.daylight?.updateCharacteristic(Characteristic.On, error);
     this.autoBrightness?.updateCharacteristic(Characteristic.On, error);

@@ -75,6 +75,13 @@ export interface LightConfig {
    * year with the adjustment off does nothing at all.
    */
   ageAdjust?: boolean;
+  /**
+   * Publish the light over Matter instead of HomeKit's own protocol. Off by
+   * default. The point is the power draw: the Home app shows watts for a
+   * Matter light, and has nowhere to show them for a HomeKit one. The switches
+   * stay on HomeKit either way, and Matter has to be turned on for the bridge.
+   */
+  matter?: boolean;
 }
 
 /**
