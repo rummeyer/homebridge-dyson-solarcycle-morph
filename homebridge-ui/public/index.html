@@ -87,6 +87,7 @@
       </p>
       <button type="button" class="btn btn-secondary" id="morph-find" disabled>Find my lights</button>
       <div id="morph-found" class="mt-3"></div>
+      <div id="morph-lights-message" class="alert morph-msg morph-hidden"></div>
       <hr>
       <h6>Configured</h6>
       <div id="morph-status">…</div>
@@ -118,11 +119,13 @@
   // block; the account fields above are owned here and left out of the layout.
   homebridge.showSchemaForm();
 
-  const show = (text, kind) => {
-    $('morph-message').textContent = text;
-    $('morph-message').className = `alert morph-msg alert-${kind}`;
+  // Each card has its own message box, so the answer to a button appears next
+  // to it rather than out of sight in the card above.
+  const show = (text, kind, where = 'morph-message') => {
+    $(where).textContent = text;
+    $(where).className = `alert morph-msg alert-${kind}`;
   };
-  const clearMessage = () => { $('morph-message').className = 'alert morph-msg morph-hidden'; };
+  const clearMessage = (where = 'morph-message') => { $(where).className = 'alert morph-msg morph-hidden'; };
 
   /** The plugin's config block, created on first run. */
   async function readConfig() {
@@ -263,9 +266,9 @@
     for (const button of document.querySelectorAll('.morph-unpair')) {
       button.addEventListener('click', () => armThenRun(button, 'Unpair', async () => {
         const { message } = await homebridge.request('/forget', { serial: button.dataset.serial });
-        show(message, 'success');
+        show(message, 'success', 'morph-lights-message');
         await refreshStatus();
-      }));
+      }), 'morph-lights-message');
     }
   }
 
@@ -275,7 +278,7 @@
    * The host iframe swallows window.confirm, so the first click turns the
    * button into the confirmation rather than opening a dialog that never shows.
    */
-  function armThenRun(button, label, task) {
+  function armThenRun(button, label, task, where) {
     if (button.dataset.armed !== 'yes') {
       button.dataset.armed = 'yes';
       button.textContent = 'Are you sure?';
@@ -289,17 +292,17 @@
       }, 5000);
       return;
     }
-    void busy(button, task);
+    void busy(button, task, where);
   }
 
-  /** Run `task` with the spinner up and the button disabled. */
-  async function busy(button, task) {
+  /** Run `task` with the spinner up and the button disabled; failures are shown in `where`. */
+  async function busy(button, task, where) {
     button.disabled = true;
     homebridge.showSpinner();
     try {
       await task();
     } catch (err) {
-      show(err.message ?? String(err), 'danger');
+      show(err.message ?? String(err), 'danger', where);
     } finally {
       homebridge.hideSpinner();
       button.disabled = false;
@@ -327,13 +330,12 @@
 
   $('morph-find').addEventListener('click', () => busy($('morph-find'), async () => {
     clearMessage();
+    clearMessage('morph-lights-message');
     const { lights, skipped } = await homebridge.request('/lights', { account: account() });
 
-    if (lights.length === 0) {
-      $('morph-found').innerHTML =
-        '<span class="text-muted">No lights on this Dyson account. Register the lamp in the MyDyson app first.</span>';
-    } else {
-      $('morph-found').innerHTML = lights.map((light) => {
+    let html = lights.length === 0
+      ? '<span class="text-muted">No lights on this Dyson account. Register the lamp in the MyDyson app first.</span>'
+      : lights.map((light) => {
         const reachable = Boolean(light.mac);
         return `<div class="mb-2">
           <code>${esc(light.serial)}</code>
@@ -348,24 +350,27 @@
         </div>`;
       }).join('');
 
-      for (const button of document.querySelectorAll('.morph-add')) {
-        button.addEventListener('click', () => void busy(button, () => addAndPair(button.dataset)));
-      }
-    }
-
     // Saying what was left out is what stops someone adding their vacuum.
     if (skipped.length) {
-      $('morph-found').innerHTML +=
-        `<p class="text-muted small mt-3 mb-0">Not a Bluetooth light, so not offered: ` +
+      html += `<p class="text-muted small mt-3 mb-0">Not a Bluetooth light, so not offered: ` +
         skipped.map((d) => `${esc(d.name)} (${esc(d.category ?? 'unknown')})`).join(', ') + '</p>';
     }
-  }));
+
+    // Written once, then wired: assigning innerHTML again afterwards (even with
+    // +=) replaces the buttons with copies that have no listeners, so they
+    // look fine and do nothing.
+    $('morph-found').innerHTML = html;
+    for (const button of document.querySelectorAll('.morph-add')) {
+      button.addEventListener('click', () =>
+        void busy(button, () => addAndPair(button.dataset), 'morph-lights-message'));
+    }
+  }, 'morph-lights-message'));
 
   async function addAndPair({ mac, serial, name }) {
     const configs = await readConfig();
     const lights = configs[0].lights;
     // Re-adding a light should correct its address, not duplicate it.
-    const existing = lights.find((l) => (l.serial ?? '').trim().toUpperCase() === serial.toUpperCase());
+    const existing = lights.find((l) => (l?.serial ?? '').trim().toUpperCase() === serial.toUpperCase());
     if (existing) {
       existing.mac = mac;
     } else {
@@ -374,7 +379,7 @@
     await homebridge.updatePluginConfig(configs);
 
     const { message } = await homebridge.request('/pair', { account: account(), serial });
-    show(message, 'success');
+    show(message, 'success', 'morph-lights-message');
     await refreshStatus();
   }
 
