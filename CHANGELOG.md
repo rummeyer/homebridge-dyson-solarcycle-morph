@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.7] — 2026-10-14
+
+### Fixed
+
+- **"Add and pair" did nothing when the account also held a device that is not
+  a light**, such as a fan or a vacuum. Writing the "Not a Bluetooth light"
+  note into the list replaced the buttons with copies that had no click
+  handler. The list is now written once and wired afterwards.
+- **Messages about your lights appear next to the lights.** Pairing, unpairing
+  and failures to find lights used to report in the account box above, out of
+  sight of the button that was pressed.
+
 ## [1.7.6] — 2026-10-01
 
 ### Changed
