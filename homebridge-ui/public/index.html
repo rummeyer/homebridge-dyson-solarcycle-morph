@@ -258,7 +258,7 @@
       }
       return `<div class="mb-2"><code>${esc(serial)}</code>
               <span class="badge badge-success ml-2">paired</span>
-              <span class="text-muted small ml-2">${esc(new Date(entry.created).toLocaleString())}</span>
+              <span class="text-muted small ml-2">paired since ${esc(new Date(entry.created).toLocaleDateString())}</span>
               ${describeHours(entry.hours)}
               <button type="button" class="btn btn-link btn-sm text-danger morph-unpair"
                       data-serial="${esc(serial)}">Unpair</button></div>`;
@@ -289,7 +289,7 @@
     const since = new Date(hours.since).toLocaleDateString();
     return `<span class="text-muted small ml-2"
                   title="Counted by the plugin while Homebridge was connected to the light">
-              · ${esc(shown)} h on since ${esc(since)}</span>`;
+              · ${esc(shown)} h on (counted since ${esc(since)})</span>`;
   }
 
   /**
