@@ -61,6 +61,7 @@ class FakeAccessory {
   displayName: string;
   UUID: string;
   constructor(displayName: string, uuid: string) { this.displayName = displayName; this.UUID = uuid; }
+  updateDisplayName(name: string) { this.displayName = name; }
   getService(kind: string) { return this.services.find((s) => s.kind === kind); }
   getServiceById(kind: string, subtype: string) {
     return this.services.find((s) => s.kind === kind && s.subtype === subtype);

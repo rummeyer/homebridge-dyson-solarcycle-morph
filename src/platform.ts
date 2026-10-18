@@ -141,7 +141,7 @@ export class MorphPlatform implements DynamicPlatformPlugin {
 
     const cached = this.cached.get(uuid);
     if (cached) {
-      cached.displayName = name;
+      cached.updateDisplayName(name);
       cached.context.light = light satisfies LightConfig;
       this.api.updatePlatformAccessories([cached]);
       this.log.info(`Restoring ${name} (${light.mac})`);

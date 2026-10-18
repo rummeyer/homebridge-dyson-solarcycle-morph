@@ -9,6 +9,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/homebridge/homebridge/wiki/Verified-Plugins"><img src="https://img.shields.io/badge/_-verified-blueviolet?color=%23491F59&style=flat&logoColor=%23FFFFFF&logo=homebridge" alt="Verified by Homebridge"></a>
   <a href="https://github.com/rummeyer/homebridge-dyson-solarcycle-morph/releases"><img src="https://img.shields.io/github/v/release/rummeyer/homebridge-dyson-solarcycle-morph?label=release" alt="Release"></a>
   <a href="https://www.npmjs.com/package/homebridge-dyson-solarcycle-morph"><img src="https://img.shields.io/npm/dt/homebridge-dyson-solarcycle-morph" alt="Downloads"></a>
   <a href="https://github.com/rummeyer/homebridge-dyson-solarcycle-morph/blob/main/LICENSE"><img src="https://img.shields.io/badge/licence-MIT-blue" alt="Licence"></a>
