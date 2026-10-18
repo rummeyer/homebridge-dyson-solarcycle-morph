@@ -5,6 +5,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] — 2026-10-18
+
+### Fixed
+
+- **Adaptive Lighting no longer switches an off lamp on.** The Home app sends
+  a colour temperature every few minutes, lamp on or off, and the lamp took
+  each one by switching itself on. A colour temperature set while the lamp is
+  off now waits, as the mode switches already do, and goes out the moment the
+  lamp is switched on.
+
 ## [1.9.0] — 2026-10-14
 
 ### Added

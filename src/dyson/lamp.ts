@@ -25,8 +25,8 @@ import {
 } from './crypto.js';
 import { Debouncer } from './debounce.js';
 import { Pacer } from './pace.js';
-import { PendingModes } from './pending.js';
-import type { ModeField } from './pending.js';
+import { PendingSettings } from './pending.js';
+import type { Held, ModeField } from './pending.js';
 import { OperationQueue } from './queue.js';
 import { planReconciliation } from './reconcile.js';
 import { SettleWindow } from './settle.js';
@@ -202,6 +202,13 @@ const MODE_LABELS: Record<ModeField, string> = {
   autoBrightness: 'Auto brightness',
   movement: 'Movement mode',
 };
+
+/** A held setting as the log says it: "daylight mode on", "colour temperature 4950 K". */
+function describeHeld([field, value]: Held): string {
+  return field === 'kelvin'
+    ? `colour temperature ${value} K`
+    : `${MODE_LABELS[field].toLowerCase()} ${value ? 'on' : 'off'}`;
+}
 
 /**
  * How often to read the lamp's state as a backstop.
@@ -483,7 +490,7 @@ export class DysonMorphLamp extends EventEmitter {
   private readonly reconciles = new Debouncer(RECONCILE_DELAY_MS, (task, key) => this.enqueue(task, key));
   private readonly settling = new SettleWindow(SETTLE_MS);
   /** Mode changes made while the lamp was off, waiting for it to light. */
-  private readonly pending = new PendingModes();
+  private readonly pending = new PendingSettings();
 
   /** Whether the running scan is one we started and must clean up. */
   private discoveryIsOurs = false;
@@ -655,7 +662,7 @@ export class DysonMorphLamp extends EventEmitter {
     }
     this.log.debug(`${label} ${on ? 'on' : 'off'} requested`);
     this.patchState({ [field]: on });
-    if (this.holdUntilLit(field, on)) {
+    if (this.holdUntilLit([field, on])) {
       return;
     }
     await this.writeFlag(uuid, on);
@@ -704,7 +711,7 @@ export class DysonMorphLamp extends EventEmitter {
     }
     this.log.debug(`Daylight mode ${on ? 'on' : 'off'} requested`);
     this.patchState({ daylight: on });
-    if (this.holdUntilLit('daylight', on)) {
+    if (this.holdUntilLit(['daylight', on])) {
       return;
     }
     await this.writeDaylight(on);
@@ -717,25 +724,31 @@ export class DysonMorphLamp extends EventEmitter {
   }
 
   /**
-   * Keep a mode change back while the lamp is off, rather than losing it.
+   * Keep a setting back while the lamp is off, rather than writing it now.
    *
-   * An off lamp discards these three silently and goes on reporting the old
-   * value, so writing one now would achieve nothing except a switch that
-   * springs back in the Home app a moment after it was flipped. The switch is
-   * left showing what was asked for — {@link patchState} has already published
-   * it — and the value is written when the lamp lights.
+   * An off lamp discards a mode silently and goes on reporting the old value,
+   * so writing one now would achieve nothing except a switch that springs back
+   * in the Home app a moment after it was flipped. A colour temperature it
+   * does take, by switching itself on; see {@link PendingSettings}. Either way
+   * the Home app is left showing what was asked for — {@link patchState} has
+   * already published it — and the value is written when the lamp lights.
    *
-   * @returns whether the change was held, in which case nothing is written.
+   * @returns whether the setting was held, in which case nothing is written.
    */
-  private holdUntilLit(field: ModeField, value: boolean): boolean {
+  private holdUntilLit(held: Held): boolean {
     if (this.state.on) {
       return false;
     }
-    this.pending.hold(field, value);
-    this.log.info(
-      `${MODE_LABELS[field]} ${value ? 'on' : 'off'} will be set when ${this.mac} is switched on; ` +
-        'an off lamp does not take it',
-    );
+    this.pending.hold(...held);
+    const [field] = held;
+    // Adaptive Lighting sends a colour temperature every few minutes: worth a
+    // line only when looking for it.
+    const line = `${describeHeld(held)} will be set when ${this.mac} is switched on`;
+    if (field === 'kelvin') {
+      this.log.debug(`${line}; an off lamp would switch itself on for it`);
+    } else {
+      this.log.info(`${line}; an off lamp does not take it`);
+    }
     return true;
   }
 
@@ -752,28 +765,30 @@ export class DysonMorphLamp extends EventEmitter {
     }
     await sleep(POWER_ON_SETTLE_MS);
     if (!this.connected || !this.state.on) {
-      // Switched off again, or the link went, before the modes could go out.
+      // Switched off again, or the link went, before the settings could go out.
       // They stay held; the next time the lamp lights they go with it.
       return;
     }
-    for (const [field, value] of this.pending.take()) {
-      this.log.info(`${this.mac} is on — setting ${MODE_LABELS[field].toLowerCase()} ${value ? 'on' : 'off'} now`);
+    for (const held of this.pending.take()) {
+      this.log.info(`${this.mac} is on — setting ${describeHeld(held)} now`);
       try {
-        await this.applyMode(field, value);
+        await this.applyHeld(held);
       } catch (error) {
-        this.log.warn(`Could not set ${MODE_LABELS[field].toLowerCase()} on ${this.mac}: ${describeError(error)}`);
+        this.log.warn(`Could not set ${describeHeld(held)} on ${this.mac}: ${describeError(error)}`);
       }
     }
   }
 
-  private async applyMode(field: ModeField, value: boolean): Promise<void> {
-    switch (field) {
+  private async applyHeld(held: Held): Promise<void> {
+    switch (held[0]) {
       case 'daylight':
-        return this.writeDaylight(value);
+        return this.writeDaylight(held[1]);
       case 'autoBrightness':
-        return this.writeFlag(CHAR_AUTO_BRIGHTNESS, value);
+        return this.writeFlag(CHAR_AUTO_BRIGHTNESS, held[1]);
       case 'movement':
-        return this.writeFlag(CHAR_MOVEMENT, value);
+        return this.writeFlag(CHAR_MOVEMENT, held[1]);
+      case 'kelvin':
+        return this.writeColorTemperature(held[1]);
     }
   }
 
@@ -783,9 +798,16 @@ export class DysonMorphLamp extends EventEmitter {
     this.desired = { ...this.desired, kelvin: clamped };
     this.settling.hold('kelvin');
     this.patchState({ kelvin: clamped });
+    if (this.holdUntilLit(['kelvin', clamped])) {
+      return;
+    }
+    await this.writeColorTemperature(clamped);
+  }
+
+  private async writeColorTemperature(kelvin: number): Promise<void> {
     // Not reconciled: a colour temperature that lands slightly off is invisible,
     // and checking it would cost a read on a link that is not always there.
-    await this.writes.schedule(CHAR_COLOR_TEMP, () => this.writeUint16(CHAR_COLOR_TEMP, clamped));
+    await this.writes.schedule(CHAR_COLOR_TEMP, () => this.writeUint16(CHAR_COLOR_TEMP, kelvin));
   }
 
   private async writeUint16(uuid: string, value: number): Promise<void> {

@@ -148,6 +148,11 @@ does what you meant by it. Nothing is kept over a restart: a plugin starting up
 takes all three from the lamp, which is the only thing that knows what it is
 really doing.
 
+**A colour temperature set while the lamp is off waits for it too.** The lamp
+would take it by switching itself on, and Adaptive Lighting in the Home app
+sends one every few minutes whether the lamp is on or off. So the lamp stays
+off, and gets the latest colour temperature the moment it is switched on.
+
 **Changes made at the lamp appear in the Home app**, usually straight away.
 
 **Out of range, the lamp shows as *No Response*** rather than the last thing it
