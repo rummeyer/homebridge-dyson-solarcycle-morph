@@ -7,6 +7,7 @@
  * drop replies if two D-Bus calls overlap on the same characteristic.
  */
 import { describeError } from '../errors.js';
+import { pacingFor, recoverAdapter } from './adapter-health.js';
 import { EventEmitter } from 'node:events';
 import { randomBytes } from 'node:crypto';
 
@@ -880,6 +881,10 @@ export class DysonMorphLamp extends EventEmitter {
         await this.connectOnce();
         this.reconnectAttempt = 0;
         this.hintedStuck = false;
+        const name = (this.adapter as unknown as { adapter?: string } | undefined)?.adapter;
+        if (name) {
+          pacingFor(name).connected();
+        }
         return;
       } catch (error) {
         if (!this.running) {
@@ -899,6 +904,10 @@ export class DysonMorphLamp extends EventEmitter {
           );
         }
         await this.teardown();
+        // An adapter that hears nothing at all is switched off and on, and tried again at once.
+        if (await recoverAdapter(this.adapter, this.reconnectAttempt, this.log)) {
+          continue;
+        }
         await sleep(delay);
       }
     }

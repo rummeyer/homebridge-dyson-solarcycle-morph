@@ -486,6 +486,16 @@ seconds. Its Bluetooth can get into a state where it looks perfectly healthy but
 refuses every connection, and a power cycle is the only thing that clears it.
 The plugin will pick the lamp up again by itself afterwards.
 
+**The Homebridge host's Bluetooth stops hearing anything.** BlueZ or the adapter
+under it can get stuck so that every connection is aborted and a scan finds
+nothing — for every device on that adapter at once. After five failed
+connections in a row the plugin listens for ten seconds: if no device near the
+adapter changes its signal in that time, it switches the adapter off and on,
+which clears it, and says so in the log. If other devices are heard, the
+adapter is fine and is left alone. Resets are at least half an hour apart, the
+pause doubling up to six hours while they do not help. Should one not be
+enough, `sudo systemctl restart bluetooth` on the host is the bigger hammer.
+
 **It connects, drops, reconnects, over and over.** Usually either the lamp is too
 far from the Homebridge host, or something nearby is using the same airwaves —
 Wi-Fi especially. [Reading the signal](#reading-the-signal) below shows which.

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A Bluetooth adapter that has stopped hearing anything is switched off and
+  on: after five failed connections in a row, if no device near it changes its
+  signal for ten seconds. On 27.10.2026 BlueZ was stuck like that for a day and
+  the lamps stayed unreachable until the Bluetooth service was restarted.
+  Resets are at least half an hour apart, doubling up to six hours.
+
 ## [1.9.2] — 2026-10-26
 
 ### Changed
